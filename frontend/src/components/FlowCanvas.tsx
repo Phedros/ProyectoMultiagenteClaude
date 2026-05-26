@@ -26,12 +26,63 @@ const TOPOLOGY_OPTIONS = [
   { value: 'hierarchical', label: 'Hierarchical', icon: '⊤' },
 ]
 
+const EMPTY_HINTS: Record<string, string> = {
+  pipeline: 'Connect them with lines to define execution order',
+  parallel: 'Agents will be arranged automatically in parallel',
+  hierarchical: 'First agent becomes supervisor, the rest become workers',
+}
+
 interface Props {
   onFlowSaved: (flowId: string) => void
   activeFlowId: string | null
 }
 
 let nodeCounter = 0
+
+// Pure layout function — runs outside React to avoid closure issues
+function computeAutoLayout(
+  topo: string,
+  currentNodes: Node[],
+  currentEdges: Edge[],
+): { nodes: Node[]; edges: Edge[] } {
+  const agentNodes = currentNodes.filter((n) => n.type === 'agentNode')
+  const otherNodes = currentNodes.filter((n) => n.type !== 'agentNode')
+
+  if (topo === 'parallel') {
+    const spacing = 240
+    const totalWidth = (agentNodes.length - 1) * spacing
+    const repositioned = agentNodes.map((node, i) => ({
+      ...node,
+      position: { x: i * spacing - totalWidth / 2, y: 0 },
+    }))
+    return { nodes: [...otherNodes, ...repositioned], edges: [] }
+  }
+
+  if (topo === 'hierarchical') {
+    if (agentNodes.length === 0) return { nodes: currentNodes, edges: currentEdges }
+
+    const [supervisor, ...workers] = agentNodes
+    const spacing = 240
+    const totalWidth = Math.max((workers.length - 1) * spacing, 0)
+
+    const supervisorNode = { ...supervisor, position: { x: 0, y: 0 } }
+    const workerNodes = workers.map((node, i) => ({
+      ...node,
+      position: { x: i * spacing - totalWidth / 2, y: 220 },
+    }))
+
+    const newEdges: Edge[] = workers.map((worker) => ({
+      id: `h-${supervisor.id}-${worker.id}`,
+      source: supervisor.id,
+      target: worker.id,
+      animated: true,
+    }))
+
+    return { nodes: [...otherNodes, supervisorNode, ...workerNodes], edges: newEdges }
+  }
+
+  return { nodes: currentNodes, edges: currentEdges }
+}
 
 export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -44,13 +95,71 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
   const [isSaving, setIsSaving] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Refs to avoid stale closures in the deletion useEffect
+  const topologyRef = useRef(topology)
+  const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
+  const rfInstanceRef = useRef(rfInstance)
+  topologyRef.current = topology
+  nodesRef.current = nodes
+  edgesRef.current = edges
+  rfInstanceRef.current = rfInstance
+
   useEffect(() => {
     flowsApi.list().then(setSavedFlows).catch(console.error)
   }, [])
 
+  // Re-apply layout when a node is deleted while in auto-layout mode
+  useEffect(() => {
+    const topo = topologyRef.current
+    if (topo !== 'parallel' && topo !== 'hierarchical') return
+    if (nodesRef.current.length === 0) return
+
+    const { nodes: newNodes, edges: newEdges } = computeAutoLayout(
+      topo,
+      nodesRef.current,
+      edgesRef.current,
+    )
+
+    const posChanged = newNodes.some((ln) => {
+      const orig = nodesRef.current.find((n) => n.id === ln.id)
+      return (
+        orig &&
+        (Math.abs(orig.position.x - ln.position.x) > 1 ||
+          Math.abs(orig.position.y - ln.position.y) > 1)
+      )
+    })
+    const edgeCountChanged = newEdges.length !== edgesRef.current.length
+
+    if (posChanged || edgeCountChanged) {
+      setNodes(newNodes)
+      setEdges(newEdges)
+      setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50)
+    }
+  }, [nodes.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleTopologyChange = useCallback(
+    (newTopology: string) => {
+      setTopology(newTopology)
+      if (newTopology === 'parallel' || newTopology === 'hierarchical') {
+        const { nodes: newNodes, edges: newEdges } = computeAutoLayout(newTopology, nodes, edges)
+        setNodes(newNodes)
+        setEdges(newEdges)
+        setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50)
+      } else {
+        // Switching to pipeline: clear auto-generated edges, user draws manually
+        setEdges([])
+      }
+    },
+    [nodes, edges, setNodes, setEdges],
+  )
+
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-    [setEdges],
+    (params: Connection) => {
+      if (topology !== 'pipeline') return
+      setEdges((eds) => addEdge({ ...params, animated: true }, eds))
+    },
+    [setEdges, topology],
   )
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -79,9 +188,22 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
         position,
         data: { agentId, label: agentName },
       }
-      setNodes((nds) => [...nds, newNode])
+
+      if (topology === 'parallel' || topology === 'hierarchical') {
+        const updatedNodes = [...nodes, newNode]
+        const { nodes: layoutNodes, edges: layoutEdges } = computeAutoLayout(
+          topology,
+          updatedNodes,
+          edges,
+        )
+        setNodes(layoutNodes)
+        setEdges(layoutEdges)
+        setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50)
+      } else {
+        setNodes((nds) => [...nds, newNode])
+      }
     },
-    [rfInstance, setNodes],
+    [rfInstance, setNodes, setEdges, topology, nodes, edges],
   )
 
   const handleSave = async () => {
@@ -157,7 +279,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
           {TOPOLOGY_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => setTopology(opt.value)}
+              onClick={() => handleTopologyChange(opt.value)}
               className={`px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1 ${
                 topology === opt.value
                   ? 'bg-indigo-600 text-white'
@@ -254,7 +376,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
           <div className="text-center">
             <div className="text-4xl mb-3">🤖</div>
             <p className="text-sm text-slate-500">Drag agents from the left panel onto the canvas</p>
-            <p className="text-xs text-slate-600 mt-1">Then connect them to build your flow</p>
+            <p className="text-xs text-slate-600 mt-1">{EMPTY_HINTS[topology]}</p>
           </div>
         </div>
       )}
