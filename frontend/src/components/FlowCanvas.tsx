@@ -16,7 +16,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import AgentNode from './nodes/AgentNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
-import { Save, FolderOpen, Plus, Trash2, GitBranch } from 'lucide-react'
+import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload } from 'lucide-react'
 
 const nodeTypes = { agentNode: AgentNode }
 
@@ -94,6 +94,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
   const [showFlowList, setShowFlowList] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   // Refs to avoid stale closures in the deletion useEffect
   const topologyRef = useRef(topology)
@@ -264,6 +265,51 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
     if (activeFlowId === id) handleNewFlow()
   }
 
+  const handleExport = useCallback(() => {
+    const payload = {
+      name: flowName,
+      topology,
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.type || 'agentNode',
+        position: n.position,
+        data: n.data,
+      })),
+      edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${flowName.replace(/\s+/g, '_')}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [flowName, topology, nodes, edges])
+
+  const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (evt) => {
+      try {
+        const json = JSON.parse(evt.target?.result as string)
+        if (json.name) setFlowName(json.name)
+        if (json.topology) setTopology(json.topology)
+        if (Array.isArray(json.nodes))
+          setNodes(json.nodes.map((n: FlowNode) => ({ ...n, type: n.type || 'agentNode' })))
+        if (Array.isArray(json.edges))
+          setEdges(json.edges.map((e: FlowEdge) => ({ ...e, animated: true })))
+        onFlowSaved('')          // treat as a new unsaved flow
+        setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 100)
+      } catch {
+        alert('Invalid flow JSON file.')
+      }
+    }
+    reader.readAsText(file)
+    // reset so the same file can be re-imported
+    e.target.value = ''
+  }, [setNodes, setEdges, onFlowSaved])
+
   return (
     <div className="relative flex h-full flex-col">
       {/* Toolbar */}
@@ -336,6 +382,32 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
               </div>
             )}
           </div>
+
+          <button
+            onClick={handleExport}
+            disabled={nodes.length === 0}
+            title="Export flow as JSON"
+            className="flex items-center gap-1.5 rounded-lg border border-[#2d3148] px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </button>
+
+          <button
+            onClick={() => importInputRef.current?.click()}
+            title="Import flow from JSON"
+            className="flex items-center gap-1.5 rounded-lg border border-[#2d3148] px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Import
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleImport}
+          />
 
           <button
             onClick={handleSave}
