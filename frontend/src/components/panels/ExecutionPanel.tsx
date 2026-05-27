@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Play, Square, Trash2, ChevronDown, Brain, X } from 'lucide-react'
+import { Play, Square, Trash2, ChevronDown, Brain, X, History, Clock, CheckCircle, AlertCircle } from 'lucide-react'
 import { useExecutionStore, ExecutionEvent } from '../../store/executionStore'
-import { memoryApi, MemoryMessage } from '../../services/api'
+import { memoryApi, MemoryMessage, runsApi, ExecutionRun } from '../../services/api'
 
 interface Props {
   flowId: string | null
@@ -198,12 +198,115 @@ function MemoryPanel({ flowId, onCleared }: { flowId: string; onCleared: () => v
   )
 }
 
+// ── Runs history panel ────────────────────────────────────────────────────────
+
+function fmtDuration(ms: number) {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function fmtDate(iso: string) {
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function RunsPanel({ flowId, runsKey }: { flowId: string; runsKey: number }) {
+  const [runs, setRuns] = useState<ExecutionRun[]>([])
+  const [selected, setSelected] = useState<ExecutionRun | null>(null)
+
+  useEffect(() => {
+    runsApi.list(flowId).then(setRuns).catch(() => setRuns([]))
+  }, [flowId, runsKey])
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    await runsApi.delete(id)
+    setRuns((rs) => rs.filter((r) => r.id !== id))
+    if (selected?.id === id) setSelected(null)
+  }
+
+  if (runs.length === 0) {
+    return <p className="p-6 text-center text-xs text-slate-600">No runs yet for this flow.</p>
+  }
+
+  if (selected) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-[#2d3148]">
+          <button onClick={() => setSelected(null)} className="text-xs text-indigo-400 hover:text-indigo-300">← Back</button>
+          <span className="text-xs text-slate-500">{fmtDate(selected.created_at)}</span>
+          <span className={`ml-auto text-xs px-1.5 py-0.5 rounded ${selected.status === 'completed' ? 'text-emerald-300 bg-emerald-500/10' : 'text-red-300 bg-red-500/10'}`}>
+            {selected.status}
+          </span>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div>
+            <div className="text-xs font-medium text-indigo-400 mb-1">Input</div>
+            <pre className="text-xs text-slate-300 whitespace-pre-wrap bg-[#0f1117] rounded p-2 leading-relaxed">{selected.input_text}</pre>
+          </div>
+          {selected.output_text && (
+            <div>
+              <div className="text-xs font-medium text-emerald-400 mb-1">Output</div>
+              <pre className="text-xs text-slate-300 whitespace-pre-wrap bg-[#0f1117] rounded p-2 leading-relaxed max-h-64 overflow-y-auto">{selected.output_text}</pre>
+            </div>
+          )}
+          {selected.error_message && (
+            <div>
+              <div className="text-xs font-medium text-red-400 mb-1">Error</div>
+              <pre className="text-xs text-red-300 whitespace-pre-wrap bg-red-500/5 rounded p-2">{selected.error_message}</pre>
+            </div>
+          )}
+          <div className="flex gap-3 text-xs text-slate-500">
+            <span>⏱ {fmtDuration(selected.duration_ms)}</span>
+            <span>🤖 {selected.agent_count} agent{selected.agent_count !== 1 ? 's' : ''}</span>
+            <span>📐 {selected.topology}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      {runs.map((run) => (
+        <div
+          key={run.id}
+          onClick={() => setSelected(run)}
+          className="flex items-start gap-2 border-b border-[#1e2130] px-3 py-2.5 hover:bg-[#1a1d2e] cursor-pointer transition-colors"
+        >
+          {run.status === 'completed'
+            ? <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+            : <AlertCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+          }
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-slate-300 truncate">{run.input_text}</p>
+            <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-600">
+              <Clock className="h-2.5 w-2.5" />
+              {fmtDate(run.created_at)}
+              <span>·</span>
+              {fmtDuration(run.duration_ms)}
+            </div>
+          </div>
+          <button
+            onClick={(e) => handleDelete(e, run.id)}
+            className="flex-shrink-0 rounded p-0.5 text-slate-600 hover:text-red-400 transition-colors"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function ExecutionPanel({ flowId }: Props) {
   const { events, isRunning, finalOutput, startExecution, stopExecution, clearEvents } = useExecutionStore()
   const [input, setInput] = useState('')
-  const [memoryKey, setMemoryKey] = useState(0)   // bump to re-load memory after a run
+  const [memoryKey, setMemoryKey] = useState(0)
+  const [runsKey, setRunsKey] = useState(0)
+  const [tab, setTab] = useState<'live' | 'history'>('live')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const streamingOutput = events
@@ -215,10 +318,11 @@ export default function ExecutionPanel({ flowId }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events.length])
 
-  // Re-fetch memory count after each completed run
+  // Re-fetch memory + runs after each completed run
   useEffect(() => {
     if (!isRunning && finalOutput) {
       setMemoryKey((k) => k + 1)
+      setRunsKey((k) => k + 1)
     }
   }, [isRunning, finalOutput])
 
@@ -229,17 +333,41 @@ export default function ExecutionPanel({ flowId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-[#2d3148] px-4 py-3">
-        <h2 className="text-sm font-semibold text-slate-200">Execution</h2>
+      {/* Header with tab switcher */}
+      <div className="flex items-center border-b border-[#2d3148] px-3 py-2 gap-1">
         <button
-          onClick={clearEvents}
-          className="rounded p-1 text-slate-500 hover:text-slate-300 transition-colors"
-          title="Clear log"
+          onClick={() => setTab('live')}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${tab === 'live' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
         >
-          <Trash2 className="h-4 w-4" />
+          <Play className="h-3 w-3" /> Live
         </button>
+        <button
+          onClick={() => { setTab('history'); setRunsKey((k) => k + 1) }}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${tab === 'history' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+        >
+          <History className="h-3 w-3" /> History
+        </button>
+        {tab === 'live' && (
+          <button
+            onClick={clearEvents}
+            className="ml-auto rounded p-1 text-slate-500 hover:text-slate-300 transition-colors"
+            title="Clear log"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+
+      {/* History tab */}
+      {tab === 'history' && flowId && (
+        <RunsPanel flowId={flowId} runsKey={runsKey} />
+      )}
+      {tab === 'history' && !flowId && (
+        <p className="p-6 text-center text-xs text-slate-600">Save a flow to see its run history.</p>
+      )}
+
+      {/* Live tab */}
+      {tab === 'live' && (<>
 
       {/* Memory indicator */}
       {flowId && (
@@ -318,6 +446,7 @@ export default function ExecutionPanel({ flowId }: Props) {
           </pre>
         </div>
       )}
+      </>)}
     </div>
   )
 }

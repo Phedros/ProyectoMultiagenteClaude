@@ -1,10 +1,12 @@
 import json
+import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.flow import Flow
 from app.models.agent import Agent
 from app.models.flow_message import FlowMessage
+from app.models.execution_run import ExecutionRun
 from app.core.engine.base import AgentConfig
 from app.core.engine.pipeline import run_pipeline
 from app.core.engine.parallel import run_parallel
@@ -12,8 +14,7 @@ from app.core.engine.hierarchical import run_hierarchical
 
 router = APIRouter(tags=["execution"])
 
-# Max conversation turns to include in the context window
-HISTORY_WINDOW = 10  # = 10 user turns + 10 assistant turns = 20 messages
+HISTORY_WINDOW = 10  # conversation turns to include as context
 
 
 def _build_agent_map(agent_ids: list[str], db: Session) -> dict[str, AgentConfig]:
@@ -32,22 +33,43 @@ def _build_agent_map(agent_ids: list[str], db: Session) -> dict[str, AgentConfig
 
 
 def _load_history(flow_id: str, db: Session) -> list[dict]:
-    """Load the recent conversation history for a flow."""
     messages = (
         db.query(FlowMessage)
         .filter(FlowMessage.flow_id == flow_id)
         .order_by(FlowMessage.created_at.asc())
         .all()
     )
-    # Take the last HISTORY_WINDOW * 2 messages (user + assistant pairs)
     recent = messages[-(HISTORY_WINDOW * 2):]
     return [{"role": m.role, "content": m.content} for m in recent]
 
 
 def _save_to_memory(flow_id: str, user_input: str, assistant_output: str, db: Session) -> None:
-    """Persist the latest exchange to the flow's conversation memory."""
     db.add(FlowMessage(flow_id=flow_id, role="user", content=user_input))
     db.add(FlowMessage(flow_id=flow_id, role="assistant", content=assistant_output))
+    db.commit()
+
+
+def _save_run(
+    flow: Flow,
+    input_text: str,
+    output_text: str,
+    status: str,
+    duration_ms: int,
+    agent_count: int,
+    error_message: str | None,
+    db: Session,
+) -> None:
+    db.add(ExecutionRun(
+        flow_id=flow.id,
+        flow_name=flow.name,
+        topology=flow.topology,
+        input_text=input_text,
+        output_text=output_text,
+        status=status,
+        error_message=error_message,
+        duration_ms=duration_ms,
+        agent_count=agent_count,
+    ))
     db.commit()
 
 
@@ -72,10 +94,8 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
             await websocket.close()
             return
 
-        # Load conversation history for this flow
         history = _load_history(flow_id, db)
 
-        # Build agent map
         agent_ids = [
             n["data"]["agentId"]
             for n in flow.nodes
@@ -83,7 +103,6 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         ]
         agents_by_id = _build_agent_map(agent_ids, db)
 
-        # Select engine
         topology = flow.topology
         if topology == "pipeline":
             runner = run_pipeline(flow.nodes, flow.edges, agents_by_id, input_text, history=history)
@@ -96,14 +115,34 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
             await websocket.close()
             return
 
-        # Stream events to client and capture final output
+        start_ms = time.monotonic()
         final_output = ""
+        error_msg = None
+        status = "completed"
+
         async for event in runner:
             await websocket.send_text(json.dumps(event.to_dict()))
             if event.type == "flow_end":
                 final_output = event.content
+            elif event.type == "error":
+                error_msg = event.content
+                status = "error"
 
-        # Persist exchange to memory
+        duration_ms = int((time.monotonic() - start_ms) * 1000)
+
+        # Persist run to history
+        _save_run(
+            flow=flow,
+            input_text=input_text,
+            output_text=final_output,
+            status=status,
+            duration_ms=duration_ms,
+            agent_count=len(agent_ids),
+            error_message=error_msg,
+            db=db,
+        )
+
+        # Persist exchange to conversation memory
         if final_output:
             _save_to_memory(flow_id, input_text, final_output, db)
 

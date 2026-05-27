@@ -4,8 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy import text, inspect as sa_inspect
 from app.database import engine, Base
-from app.models import agent, flow, flow_message  # noqa: F401 — registers models with Base
-from app.api import agents, flows, execution, memory
+from app.models import agent, flow, flow_message, execution_run  # noqa: F401
+from app.api import agents, flows, execution, memory, runs
 
 load_dotenv(override=True)
 
@@ -44,6 +44,7 @@ app.include_router(agents.router, prefix="/api")
 app.include_router(flows.router, prefix="/api")
 app.include_router(execution.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
+app.include_router(runs.router, prefix="/api")
 
 
 @app.get("/health")

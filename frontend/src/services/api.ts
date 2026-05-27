@@ -92,3 +92,22 @@ export const memoryApi = {
   get: (flowId: string) => request<MemoryMessage[]>(`/flows/${flowId}/memory`),
   clear: (flowId: string) => request<void>(`/flows/${flowId}/memory`, { method: 'DELETE' }),
 }
+
+export interface ExecutionRun {
+  id: string
+  flow_id: string
+  flow_name: string
+  topology: string
+  input_text: string
+  output_text: string
+  status: 'completed' | 'error' | 'stopped'
+  error_message: string | null
+  duration_ms: number
+  agent_count: number
+  created_at: string
+}
+
+export const runsApi = {
+  list: (flowId: string) => request<ExecutionRun[]>(`/flows/${flowId}/runs`),
+  delete: (runId: string) => request<void>(`/runs/${runId}`, { method: 'DELETE' }),
+}
