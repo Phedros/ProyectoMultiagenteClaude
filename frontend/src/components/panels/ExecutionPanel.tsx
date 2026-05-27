@@ -6,28 +6,88 @@ interface Props {
   flowId: string | null
 }
 
+const EVENT_BADGE_STYLES: Record<string, string> = {
+  flow_start:  'bg-blue-500/20 text-blue-300',
+  agent_start: 'bg-indigo-500/20 text-indigo-300',
+  token:       'bg-slate-500/10 text-slate-400',
+  tool_call:   'bg-amber-500/20 text-amber-300',
+  tool_result: 'bg-teal-500/20 text-teal-300',
+  agent_end:   'bg-purple-500/20 text-purple-300',
+  flow_end:    'bg-emerald-500/20 text-emerald-300',
+  error:       'bg-red-500/20 text-red-300',
+}
+
 function EventBadge({ type }: { type: string }) {
-  const map: Record<string, string> = {
-    flow_start: 'bg-blue-500/20 text-blue-300',
-    agent_start: 'bg-indigo-500/20 text-indigo-300',
-    token: 'bg-slate-500/10 text-slate-400',
-    agent_end: 'bg-purple-500/20 text-purple-300',
-    flow_end: 'bg-emerald-500/20 text-emerald-300',
-    error: 'bg-red-500/20 text-red-300',
-  }
   return (
-    <span className={`rounded px-1.5 py-0.5 text-xs font-mono font-medium ${map[type] || 'bg-slate-500/20 text-slate-400'}`}>
+    <span className={`rounded px-1.5 py-0.5 text-xs font-mono font-medium ${EVENT_BADGE_STYLES[type] ?? 'bg-slate-500/20 text-slate-400'}`}>
       {type}
     </span>
   )
 }
 
+function ToolCallRow({ event }: { event: ExecutionEvent }) {
+  let toolName = ''
+  let args: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(event.content)
+    toolName = parsed.tool ?? ''
+    args = parsed.args ?? {}
+  } catch {
+    toolName = event.content
+  }
+
+  return (
+    <div className="border-b border-[#1e2130] py-2 px-3">
+      <div className="flex items-center gap-2">
+        <EventBadge type="tool_call" />
+        {event.agentName && <span className="text-xs font-medium text-slate-300">{event.agentName}</span>}
+        <span className="text-xs font-mono text-amber-400">→ {toolName}</span>
+      </div>
+      {Object.keys(args).length > 0 && (
+        <pre className="mt-1 text-xs text-slate-500 font-mono leading-relaxed whitespace-pre-wrap break-all">
+          {JSON.stringify(args, null, 2)}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function ToolResultRow({ event }: { event: ExecutionEvent }) {
+  const [expanded, setExpanded] = useState(false)
+  const preview = event.content.slice(0, 200)
+  const hasMore = event.content.length > 200
+
+  return (
+    <div className="border-b border-[#1e2130] py-2 px-3">
+      <div className="flex items-center gap-2">
+        <EventBadge type="tool_result" />
+        {event.agentName && <span className="text-xs font-medium text-slate-300">{event.agentName}</span>}
+      </div>
+      <pre className="mt-1 text-xs text-teal-400/70 font-mono leading-relaxed whitespace-pre-wrap break-all">
+        {expanded ? event.content : preview}
+        {hasMore && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="ml-1 text-indigo-400 hover:text-indigo-300 not-italic"
+          >
+            {expanded ? ' less' : '...more'}
+            <ChevronDown className={`inline h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        )}
+      </pre>
+    </div>
+  )
+}
+
 function EventRow({ event }: { event: ExecutionEvent }) {
   const [expanded, setExpanded] = useState(false)
-  const preview = event.content.slice(0, 120)
-  const hasMore = event.content.length > 120
 
   if (event.type === 'token') return null
+  if (event.type === 'tool_call') return <ToolCallRow event={event} />
+  if (event.type === 'tool_result') return <ToolResultRow event={event} />
+
+  const preview = event.content.slice(0, 120)
+  const hasMore = event.content.length > 120
 
   return (
     <div className="border-b border-[#1e2130] py-2 px-3">
@@ -60,7 +120,6 @@ export default function ExecutionPanel({ flowId }: Props) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Live streaming: build output from tokens
   const streamingOutput = events
     .filter((e) => e.type === 'token')
     .map((e) => e.content)

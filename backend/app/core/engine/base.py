@@ -1,5 +1,5 @@
 from typing import AsyncGenerator, List, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -9,11 +9,12 @@ class AgentConfig:
     system_prompt: str
     model: str
     temperature: float
+    tools: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ExecutionEvent:
-    type: str  # "flow_start" | "agent_start" | "token" | "agent_end" | "flow_end" | "error"
+    type: str  # "flow_start"|"agent_start"|"token"|"tool_call"|"tool_result"|"agent_end"|"flow_end"|"error"
     agent_id: str = ""
     agent_name: str = ""
     content: str = ""

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type ExecutionEventType = 'flow_start' | 'agent_start' | 'token' | 'agent_end' | 'flow_end' | 'error'
+export type ExecutionEventType = 'flow_start' | 'agent_start' | 'token' | 'tool_call' | 'tool_result' | 'agent_end' | 'flow_end' | 'error'
 
 export interface ExecutionEvent {
   type: ExecutionEventType

@@ -21,6 +21,7 @@ def _build_agent_map(agent_ids: list[str], db: Session) -> dict[str, AgentConfig
             system_prompt=a.system_prompt,
             model=a.model,
             temperature=a.temperature,
+            tools=a.tools or [],
         )
         for a in agents
     }

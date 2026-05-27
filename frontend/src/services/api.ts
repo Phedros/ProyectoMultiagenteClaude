@@ -6,6 +6,7 @@ export interface Agent {
   system_prompt: string
   model: string
   temperature: number
+  tools: string[]
   created_at: string
   updated_at: string | null
 }
@@ -15,6 +16,7 @@ export interface AgentCreate {
   system_prompt: string
   model: string
   temperature: number
+  tools: string[]
 }
 
 export interface Flow {

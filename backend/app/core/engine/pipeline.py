@@ -1,6 +1,6 @@
 from typing import AsyncGenerator, List, Dict, Any
 from app.core.engine.base import AgentConfig, ExecutionEvent, topological_sort
-from app.core.llm import call_agent
+from app.core.llm import run_agent_turn
 
 
 async def run_pipeline(
@@ -12,11 +12,10 @@ async def run_pipeline(
     """
     Executes a pipeline topology: output of agent N becomes input of agent N+1.
     Resolves execution order via topological sort of the DAG.
+    Each agent can optionally use tools via the function-calling loop.
     """
-    # Map React Flow node IDs to agent configs
-    node_ids = [n["id"] for n in nodes if n.get("type") == "agentNode"]
+    # Map React Flow node IDs → agent configs
     node_to_agent: Dict[str, AgentConfig] = {}
-
     for node in nodes:
         if node.get("type") != "agentNode":
             continue
@@ -49,22 +48,22 @@ async def run_pipeline(
             content=current_input,
         )
 
-        accumulated_output = []
-        async for token in call_agent(
+        accumulated_tokens: list[str] = []
+
+        async for event in run_agent_turn(
             system_prompt=agent.system_prompt,
             user_message=current_input,
             model=agent.model,
             temperature=agent.temperature,
+            enabled_tools=agent.tools,
+            agent_id=agent.id,
+            agent_name=agent.name,
         ):
-            accumulated_output.append(token)
-            yield ExecutionEvent(
-                type="token",
-                agent_id=agent.id,
-                agent_name=agent.name,
-                content=token,
-            )
+            if event.type == "token":
+                accumulated_tokens.append(event.content)
+            yield event  # forward tokens, tool_call, tool_result to the client
 
-        full_output = "".join(accumulated_output)
+        full_output = "".join(accumulated_tokens)
         yield ExecutionEvent(
             type="agent_end",
             agent_id=agent.id,

@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, NodeProps } from '@xyflow/react'
-import { Bot, Zap } from 'lucide-react'
+import { Bot, Zap, Wrench } from 'lucide-react'
 import { useAgentStore } from '../../store/agentStore'
 import { useExecutionStore } from '../../store/executionStore'
 
@@ -16,6 +16,7 @@ function AgentNode({ data, selected }: NodeProps) {
 
   const agent = agents.find((a) => a.id === nodeData.agentId)
   const isActive = agent && activeAgentId === agent.id
+  const toolCount = agent?.tools?.length ?? 0
 
   return (
     <div
@@ -47,9 +48,17 @@ function AgentNode({ data, selected }: NodeProps) {
           <div className="truncate text-sm font-semibold text-slate-100">
             {nodeData.label || 'Agent'}
           </div>
-          {agent && (
-            <div className="truncate text-xs text-slate-400">{agent.model}</div>
-          )}
+          <div className="flex items-center gap-2">
+            {agent && (
+              <div className="truncate text-xs text-slate-400">{agent.model}</div>
+            )}
+            {toolCount > 0 && (
+              <div className="flex items-center gap-0.5 text-xs text-amber-400">
+                <Wrench className="h-2.5 w-2.5" />
+                {toolCount}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
