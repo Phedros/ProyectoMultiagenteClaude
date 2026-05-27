@@ -1,17 +1,14 @@
 import asyncio
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict, Any, Optional
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn
 
 
 async def _collect_agent_output(
-    agent: AgentConfig, input_text: str
+    agent: AgentConfig,
+    input_text: str,
+    history: Optional[List[Dict]] = None,
 ) -> tuple[AgentConfig, str, list[ExecutionEvent]]:
-    """
-    Run a single agent to completion, collecting all events.
-    Returns (agent, final_text, internal_events).
-    internal_events = token + tool_call + tool_result events (NOT agent_start/end).
-    """
     internal_events: list[ExecutionEvent] = []
     tokens: list[str] = []
 
@@ -23,6 +20,7 @@ async def _collect_agent_output(
         enabled_tools=agent.tools,
         agent_id=agent.id,
         agent_name=agent.name,
+        history=history,
     ):
         internal_events.append(event)
         if event.type == "token":
@@ -36,11 +34,11 @@ async def run_parallel(
     edges: List[Dict[str, Any]],
     agents_by_id: Dict[str, AgentConfig],
     initial_input: str,
+    history: Optional[List[Dict]] = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
-    Scatter-gather: fans out input to all agent nodes simultaneously,
-    then aggregates all results into a final combined output.
-    Each agent can optionally use tools.
+    Scatter-gather: all agents receive the same input in parallel.
+    All agents see the conversation history (they share the same context).
     """
     agent_nodes = [n for n in nodes if n.get("type") == "agentNode"]
     agents: List[AgentConfig] = []
@@ -58,19 +56,16 @@ async def run_parallel(
         content=f"Launching {len(agents)} agents in parallel",
     )
 
-    # Signal all agents are starting
     for agent in agents:
         yield ExecutionEvent(
             type="agent_start", agent_id=agent.id, agent_name=agent.name, content=initial_input
         )
 
-    # Run all agents concurrently
-    tasks = [_collect_agent_output(agent, initial_input) for agent in agents]
+    tasks = [_collect_agent_output(agent, initial_input, history) for agent in agents]
     results = await asyncio.gather(*tasks)
 
     aggregated_parts = []
     for agent, output, internal_events in results:
-        # Replay internal events (tool calls, tokens, etc.)
         for ev in internal_events:
             yield ev
         yield ExecutionEvent(type="agent_end", agent_id=agent.id, agent_name=agent.name, content=output)

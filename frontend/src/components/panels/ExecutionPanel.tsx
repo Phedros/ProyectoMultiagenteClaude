@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState } from 'react'
-import { Play, Square, Trash2, ChevronDown } from 'lucide-react'
+import { useRef, useEffect, useState, useCallback } from 'react'
+import { Play, Square, Trash2, ChevronDown, Brain, X } from 'lucide-react'
 import { useExecutionStore, ExecutionEvent } from '../../store/executionStore'
+import { memoryApi, MemoryMessage } from '../../services/api'
 
 interface Props {
   flowId: string | null
@@ -115,9 +116,94 @@ function EventRow({ event }: { event: ExecutionEvent }) {
   )
 }
 
+// ── Memory panel ──────────────────────────────────────────────────────────────
+
+function MemoryPanel({ flowId, onCleared }: { flowId: string; onCleared: () => void }) {
+  const [messages, setMessages] = useState<MemoryMessage[]>([])
+  const [show, setShow] = useState(false)
+  const [clearing, setClearing] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const data = await memoryApi.get(flowId)
+      setMessages(data)
+    } catch {
+      setMessages([])
+    }
+  }, [flowId])
+
+  useEffect(() => { load() }, [load])
+
+  const handleClear = async () => {
+    setClearing(true)
+    try {
+      await memoryApi.clear(flowId)
+      setMessages([])
+      onCleared()
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const turns = Math.floor(messages.length / 2)
+
+  return (
+    <div className="border-b border-[#2d3148] bg-[#0d0f19]">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Brain className="h-3.5 w-3.5 text-violet-400" />
+        <span className="text-xs text-slate-400">
+          Memory:{' '}
+          <span className={turns > 0 ? 'text-violet-300 font-medium' : 'text-slate-500'}>
+            {turns > 0 ? `${turns} turn${turns !== 1 ? 's' : ''}` : 'empty'}
+          </span>
+        </span>
+
+        {turns > 0 && (
+          <>
+            <button
+              onClick={() => setShow(!show)}
+              className="ml-auto text-xs text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-0.5"
+            >
+              {show ? 'hide' : 'view'}
+              <ChevronDown className={`h-3 w-3 transition-transform ${show ? 'rotate-180' : ''}`} />
+            </button>
+            <button
+              onClick={handleClear}
+              disabled={clearing}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors disabled:opacity-40"
+              title="Clear memory"
+            >
+              <X className="h-3 w-3" />
+              {clearing ? 'clearing…' : 'clear'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {show && turns > 0 && (
+        <div className="max-h-48 overflow-y-auto border-t border-[#1e2130]">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`px-3 py-2 border-b border-[#1e2130] ${msg.role === 'user' ? 'bg-[#0f1117]' : 'bg-[#0d0f19]'}`}>
+              <div className="text-xs font-medium mb-0.5 ${msg.role === 'user' ? 'text-indigo-400' : 'text-violet-400'}">
+                {msg.role === 'user' ? '👤 You' : '🤖 Flow'}
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed line-clamp-3 whitespace-pre-wrap">
+                {msg.content}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main panel ────────────────────────────────────────────────────────────────
+
 export default function ExecutionPanel({ flowId }: Props) {
   const { events, isRunning, finalOutput, startExecution, stopExecution, clearEvents } = useExecutionStore()
   const [input, setInput] = useState('')
+  const [memoryKey, setMemoryKey] = useState(0)   // bump to re-load memory after a run
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const streamingOutput = events
@@ -129,6 +215,13 @@ export default function ExecutionPanel({ flowId }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events.length])
 
+  // Re-fetch memory count after each completed run
+  useEffect(() => {
+    if (!isRunning && finalOutput) {
+      setMemoryKey((k) => k + 1)
+    }
+  }, [isRunning, finalOutput])
+
   const handleRun = () => {
     if (!flowId || !input.trim() || isRunning) return
     startExecution(flowId, input)
@@ -136,6 +229,7 @@ export default function ExecutionPanel({ flowId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Header */}
       <div className="flex items-center justify-between border-b border-[#2d3148] px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-200">Execution</h2>
         <button
@@ -146,6 +240,15 @@ export default function ExecutionPanel({ flowId }: Props) {
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Memory indicator */}
+      {flowId && (
+        <MemoryPanel
+          key={`${flowId}-${memoryKey}`}
+          flowId={flowId}
+          onCleared={() => setMemoryKey((k) => k + 1)}
+        />
+      )}
 
       {/* Input area */}
       <div className="border-b border-[#2d3148] p-3 space-y-2">

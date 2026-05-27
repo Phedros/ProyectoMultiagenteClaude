@@ -31,10 +31,15 @@ async def run_agent_turn(
     enabled_tools: list[str],
     agent_id: str = "",
     agent_name: str = "",
+    history: list[dict] | None = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
-    Run a complete agent turn with optional tool use.
+    Run a complete agent turn with optional tool use and conversation history.
     Works with any LiteLLM-supported provider.
+
+    history: list of {"role": "user"|"assistant", "content": str} messages
+             from previous flow executions. Injected between system prompt
+             and the current user message.
 
     Yields ExecutionEvent objects:
       - type="token"       — a streamed text chunk from the model
@@ -43,10 +48,13 @@ async def run_agent_turn(
     """
     schemas = get_tool_schemas(enabled_tools)
 
-    messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+
+    # Inject conversation history so the agent has context of past runs
+    if history:
+        messages.extend(history)
+
+    messages.append({"role": "user", "content": user_message})
 
     while True:
         kwargs: dict = {}
@@ -151,18 +159,21 @@ async def call_agent_non_streaming(
     user_message: str,
     model: str,
     temperature: float = 0.3,
+    history: list[dict] | None = None,
 ) -> str:
     """
     Non-streaming single call — used for structured outputs
     (e.g. hierarchical supervisor decomposition step).
     """
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+
     response = await litellm.acompletion(
         model=model,
         temperature=temperature,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+        messages=messages,
         stream=False,
     )
     return response.choices[0].message.content or ""

@@ -1,14 +1,15 @@
 import asyncio
 import json
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict, Any, Optional
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn, call_agent_non_streaming
 
 
 async def _collect_output(
-    agent: AgentConfig, input_text: str
+    agent: AgentConfig,
+    input_text: str,
 ) -> tuple[AgentConfig, str, list[ExecutionEvent]]:
-    """Run an agent to completion, collecting events and final text."""
+    """Run a worker agent to completion, collecting events and final text."""
     internal_events: list[ExecutionEvent] = []
     tokens: list[str] = []
 
@@ -33,21 +34,19 @@ async def run_hierarchical(
     edges: List[Dict[str, Any]],
     agents_by_id: Dict[str, AgentConfig],
     initial_input: str,
+    history: Optional[List[Dict]] = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Hierarchical execution:
-      1. Supervisor (first node) decomposes the task into N sub-tasks
-      2. Workers execute their sub-tasks in parallel (with optional tool use)
-      3. Supervisor consolidates all results into a final answer (with optional tool use)
-
-    Requires at least 2 agent nodes: 1 supervisor + N workers.
+      1. Supervisor decomposes the task (sees conversation history)
+      2. Workers execute sub-tasks in parallel (no history — focused on sub-task)
+      3. Supervisor consolidates results (sees history for coherent final answer)
     """
     agent_nodes = [n for n in nodes if n.get("type") == "agentNode"]
     if len(agent_nodes) < 2:
         yield ExecutionEvent(type="error", content="Hierarchical topology requires at least 2 agent nodes")
         return
 
-    # First node in the list is the supervisor
     supervisor_node = agent_nodes[0]
     worker_nodes = agent_nodes[1:]
 
@@ -65,7 +64,7 @@ async def run_hierarchical(
 
     yield ExecutionEvent(type="flow_start", content=f"Supervisor: {supervisor.name} | Workers: {len(workers)}")
 
-    # ── Step 1: Supervisor decomposes the task (plain call, structured JSON output) ──
+    # ── Step 1: Supervisor decomposes (non-streaming, structured JSON) ──
     worker_names = [w.name for w in workers]
     decomposition_prompt = (
         f"You are a supervisor. Break the following task into exactly {len(workers)} sub-tasks, "
@@ -78,12 +77,12 @@ async def run_hierarchical(
         type="agent_start", agent_id=supervisor.id, agent_name=supervisor.name, content=initial_input
     )
 
-    # Decomposition uses a non-streaming call (needs structured JSON)
     raw_decomp = await call_agent_non_streaming(
         system_prompt=supervisor.system_prompt,
         user_message=decomposition_prompt,
         model=supervisor.model,
         temperature=0.3,
+        history=history,  # supervisor sees conversation history for context
     )
 
     yield ExecutionEvent(
@@ -97,12 +96,11 @@ async def run_hierarchical(
     except json.JSONDecodeError:
         sub_tasks = [initial_input] * len(workers)
 
-    # Pad / trim to match worker count
     while len(sub_tasks) < len(workers):
         sub_tasks.append(initial_input)
     sub_tasks = sub_tasks[: len(workers)]
 
-    # ── Step 2: Workers execute in parallel (with tool support) ──
+    # ── Step 2: Workers in parallel (no history — focused on their sub-task) ──
     for worker, task in zip(workers, sub_tasks):
         yield ExecutionEvent(
             type="agent_start", agent_id=worker.id, agent_name=worker.name, content=task
@@ -118,7 +116,7 @@ async def run_hierarchical(
         yield ExecutionEvent(type="agent_end", agent_id=worker.id, agent_name=worker.name, content=output)
         worker_outputs[worker.name] = output
 
-    # ── Step 3: Supervisor consolidates results (with tool support) ──
+    # ── Step 3: Supervisor consolidates (with history for coherence) ──
     consolidation_input = "\n\n".join(
         [f"[{name}]:\n{output}" for name, output in worker_outputs.items()]
     )
@@ -144,6 +142,7 @@ async def run_hierarchical(
         enabled_tools=supervisor.tools,
         agent_id=supervisor.id,
         agent_name=supervisor.name,
+        history=history,  # supervisor sees history for a coherent final answer
     ):
         if event.type == "token":
             tokens.append(event.content)

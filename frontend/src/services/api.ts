@@ -80,3 +80,15 @@ export const flowsApi = {
     request<Flow>(`/flows/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request<void>(`/flows/${id}`, { method: 'DELETE' }),
 }
+
+export interface MemoryMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export const memoryApi = {
+  get: (flowId: string) => request<MemoryMessage[]>(`/flows/${flowId}/memory`),
+  clear: (flowId: string) => request<void>(`/flows/${flowId}/memory`, { method: 'DELETE' }),
+}
