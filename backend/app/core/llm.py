@@ -1,25 +1,26 @@
 """
-LLM interface: unified agent runner that handles plain LLM calls
-and the full tool-calling loop (tool_calls → execute → continue).
+LLM interface: unified agent runner using LiteLLM for multi-provider support.
+
+Supported providers (configure via env vars):
+  OpenAI    → OPENAI_API_KEY
+  Anthropic → ANTHROPIC_API_KEY
+  Gemini    → GEMINI_API_KEY
+  Groq      → GROQ_API_KEY
+  Ollama    → no key needed (must be running locally)
 """
 import json
+import litellm
 from typing import AsyncGenerator
-import os
-from openai import AsyncOpenAI
 from app.core.engine.base import ExecutionEvent
 from app.core.tools import get_tool_schemas, execute_tool
 
-_client: AsyncOpenAI | None = None
+# Drop unsupported params (e.g. temperature on some models, tools on basic Ollama)
+litellm.drop_params = True
+# Suppress litellm's own logging noise
+litellm.set_verbose = False
 
-
-def get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY not set in environment")
-        _client = AsyncOpenAI(api_key=api_key)
-    return _client
+import logging
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 
 async def run_agent_turn(
@@ -33,15 +34,13 @@ async def run_agent_turn(
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Run a complete agent turn with optional tool use.
+    Works with any LiteLLM-supported provider.
 
     Yields ExecutionEvent objects:
       - type="token"       — a streamed text chunk from the model
-      - type="tool_call"   — the model is invoking a tool (content = JSON with tool + args)
-      - type="tool_result" — the tool returned a result (content = result string)
-
-    The caller (engine) is responsible for emitting agent_start / agent_end events.
+      - type="tool_call"   — the model is invoking a tool
+      - type="tool_result" — the tool result
     """
-    client = get_client()
     schemas = get_tool_schemas(enabled_tools)
 
     messages: list[dict] = [
@@ -50,13 +49,12 @@ async def run_agent_turn(
     ]
 
     while True:
-        # Build kwargs — only add tools if there are any enabled
         kwargs: dict = {}
         if schemas:
             kwargs["tools"] = schemas
             kwargs["tool_choice"] = "auto"
 
-        stream = await client.chat.completions.create(
+        stream = await litellm.acompletion(
             model=model,
             temperature=temperature,
             messages=messages,
@@ -69,13 +67,14 @@ async def run_agent_turn(
         finish_reason: str | None = None
 
         async for chunk in stream:
+            if not chunk.choices:
+                continue
             choice = chunk.choices[0]
             if choice.finish_reason:
                 finish_reason = choice.finish_reason
 
             delta = choice.delta
 
-            # Stream text tokens
             if delta.content:
                 content_acc.append(delta.content)
                 yield ExecutionEvent(
@@ -85,7 +84,6 @@ async def run_agent_turn(
                     content=delta.content,
                 )
 
-            # Accumulate tool call deltas
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
                     idx = tc_delta.index
@@ -99,9 +97,7 @@ async def run_agent_turn(
                         if tc_delta.function.arguments:
                             tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
 
-        # ── Handle finish reason ──────────────────────────────────────────
         if finish_reason == "tool_calls":
-            # Build the assistant message with the tool_calls field
             tool_calls_list = [
                 {
                     "id": tc["id"],
@@ -116,7 +112,6 @@ async def run_agent_turn(
                 "tool_calls": tool_calls_list,
             })
 
-            # Execute each tool and append the result
             for tc in (tool_calls_acc[i] for i in sorted(tool_calls_acc)):
                 tool_name = tc["name"]
                 try:
@@ -124,7 +119,6 @@ async def run_agent_turn(
                 except json.JSONDecodeError:
                     args = {}
 
-                # Emit tool_call event
                 yield ExecutionEvent(
                     type="tool_call",
                     agent_id=agent_id,
@@ -132,10 +126,8 @@ async def run_agent_turn(
                     content=json.dumps({"tool": tool_name, "args": args}),
                 )
 
-                # Run the tool
                 result = await execute_tool(tool_name, args)
 
-                # Emit tool_result event
                 yield ExecutionEvent(
                     type="tool_result",
                     agent_id=agent_id,
@@ -143,43 +135,34 @@ async def run_agent_turn(
                     content=result,
                 )
 
-                # Append tool result to messages for next LLM call
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": result,
                 })
 
-            # Loop back — model will continue with the tool results
             continue
-
         else:
-            # finish_reason == "stop" (or None / other) — we're done
             break
 
 
-# ── Backwards-compat helper used by hierarchical engine directly ──────────
-async def call_agent(
+async def call_agent_non_streaming(
     system_prompt: str,
     user_message: str,
-    model: str = "gpt-4o-mini",
-    temperature: float = 0.7,
-) -> AsyncGenerator[str, None]:
+    model: str,
+    temperature: float = 0.3,
+) -> str:
     """
-    Simple streaming call without tool support.
-    Kept for the hierarchical decomposition step which needs plain text output.
+    Non-streaming single call — used for structured outputs
+    (e.g. hierarchical supervisor decomposition step).
     """
-    client = get_client()
-    stream = await client.chat.completions.create(
+    response = await litellm.acompletion(
         model=model,
         temperature=temperature,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        stream=True,
+        stream=False,
     )
-    async for chunk in stream:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    return response.choices[0].message.content or ""

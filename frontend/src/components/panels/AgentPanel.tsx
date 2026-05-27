@@ -3,12 +3,57 @@ import { Plus, Trash2, Edit2, X, Check, ChevronDown, Wrench } from 'lucide-react
 import { useAgentStore } from '../../store/agentStore'
 import { Agent } from '../../services/api'
 
-const MODELS = [
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gpt-4-turbo',
-  'gpt-3.5-turbo',
+// Grouped model list — value is the exact LiteLLM model string
+const MODEL_GROUPS = [
+  {
+    provider: 'OpenAI',
+    color: 'text-emerald-400',
+    models: [
+      { value: 'gpt-4o',       label: 'GPT-4o' },
+      { value: 'gpt-4o-mini',  label: 'GPT-4o mini  (fast)' },
+      { value: 'gpt-3.5-turbo',label: 'GPT-3.5 Turbo  (cheap)' },
+    ],
+  },
+  {
+    provider: 'Anthropic',
+    color: 'text-orange-400',
+    models: [
+      { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+      { value: 'claude-3-5-haiku-20241022',  label: 'Claude 3.5 Haiku  (fast)' },
+      { value: 'claude-3-opus-20240229',     label: 'Claude 3 Opus' },
+    ],
+  },
+  {
+    provider: 'Google Gemini',
+    color: 'text-blue-400',
+    models: [
+      { value: 'gemini/gemini-2.0-flash',  label: 'Gemini 2.0 Flash  (fast)' },
+      { value: 'gemini/gemini-1.5-pro',    label: 'Gemini 1.5 Pro' },
+    ],
+  },
+  {
+    provider: 'Groq  (fast · free tier)',
+    color: 'text-purple-400',
+    models: [
+      { value: 'groq/llama-3.1-70b-versatile', label: 'Llama 3.1 70B' },
+      { value: 'groq/mixtral-8x7b-32768',       label: 'Mixtral 8x7B' },
+      { value: 'groq/gemma2-9b-it',             label: 'Gemma 2 9B' },
+    ],
+  },
+  {
+    provider: 'Ollama  (local)',
+    color: 'text-slate-400',
+    models: [
+      { value: 'ollama/llama3',    label: 'Llama 3' },
+      { value: 'ollama/mistral',   label: 'Mistral' },
+      { value: 'ollama/codellama', label: 'Code Llama' },
+      { value: 'ollama/phi3',      label: 'Phi-3' },
+    ],
+  },
 ]
+
+// Flat map for label lookup
+const ALL_MODELS = MODEL_GROUPS.flatMap((g) => g.models)
 
 const AVAILABLE_TOOLS = [
   { id: 'web_search', label: 'Web Search', icon: '🔍' },
@@ -108,14 +153,31 @@ export default function AgentPanel() {
             onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
           />
 
-          {/* Model */}
-          <select
-            className="w-full rounded-lg border border-[#2d3148] bg-[#0f1117] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
-            value={form.model}
-            onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-          >
-            {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          {/* Model — quick pick + free-text */}
+          <div className="space-y-1.5">
+            <select
+              className="w-full rounded-lg border border-[#2d3148] bg-[#0f1117] px-3 py-2 text-sm text-slate-400 focus:border-indigo-500 focus:outline-none"
+              value={ALL_MODELS.some((m) => m.value === form.model) ? form.model : ''}
+              onChange={(e) => {
+                if (e.target.value) setForm((f) => ({ ...f, model: e.target.value }))
+              }}
+            >
+              <option value="">— Quick pick —</option>
+              {MODEL_GROUPS.map((group) => (
+                <optgroup key={group.provider} label={`── ${group.provider}`}>
+                  {group.models.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <input
+              className="w-full rounded-lg border border-[#2d3148] bg-[#0f1117] px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none font-mono"
+              placeholder="or type any model string…"
+              value={form.model}
+              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+            />
+          </div>
 
           {/* Temperature */}
           <div className="flex items-center gap-3">
@@ -184,7 +246,7 @@ export default function AgentPanel() {
               <div className="min-w-0">
                 <div className="text-sm font-medium text-slate-100 truncate">{agent.name}</div>
                 <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span>{agent.model}</span>
+                  <span>{ALL_MODELS.find((m) => m.value === agent.model)?.label ?? agent.model}</span>
                   {agent.tools && agent.tools.length > 0 && (
                     <span className="flex items-center gap-0.5 text-amber-400">
                       <Wrench className="h-2.5 w-2.5" />

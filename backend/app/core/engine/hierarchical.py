@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import AsyncGenerator, List, Dict, Any
 from app.core.engine.base import AgentConfig, ExecutionEvent
-from app.core.llm import run_agent_turn, call_agent, get_client
+from app.core.llm import run_agent_turn, call_agent_non_streaming
 
 
 async def _collect_output(
@@ -78,17 +78,13 @@ async def run_hierarchical(
         type="agent_start", agent_id=supervisor.id, agent_name=supervisor.name, content=initial_input
     )
 
-    # Decomposition uses a direct non-streaming call (needs structured JSON)
-    client = get_client()
-    decomp_resp = await client.chat.completions.create(
+    # Decomposition uses a non-streaming call (needs structured JSON)
+    raw_decomp = await call_agent_non_streaming(
+        system_prompt=supervisor.system_prompt,
+        user_message=decomposition_prompt,
         model=supervisor.model,
         temperature=0.3,
-        messages=[
-            {"role": "system", "content": supervisor.system_prompt},
-            {"role": "user", "content": decomposition_prompt},
-        ],
     )
-    raw_decomp = decomp_resp.choices[0].message.content or "[]"
 
     yield ExecutionEvent(
         type="agent_end", agent_id=supervisor.id, agent_name=supervisor.name, content=raw_decomp

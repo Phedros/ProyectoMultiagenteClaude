@@ -47,8 +47,30 @@ app.include_router(execution.router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    key = os.getenv("OPENAI_API_KEY", "")
+    providers = []
+    if os.getenv("OPENAI_API_KEY"):
+        providers.append("openai")
+    if os.getenv("ANTHROPIC_API_KEY"):
+        providers.append("anthropic")
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        providers.append("gemini")
+    if os.getenv("GROQ_API_KEY"):
+        providers.append("groq")
+    # Ollama doesn't need a key — always listed as optional
+    providers.append("ollama (local)")
     return {
         "status": "ok",
-        "api_key_prefix": key[:12] + "..." if key else "NOT SET",
+        "configured_providers": providers,
+    }
+
+
+@app.get("/api/providers")
+async def list_providers():
+    """Returns which LLM providers are currently configured via env vars."""
+    return {
+        "openai":    bool(os.getenv("OPENAI_API_KEY")),
+        "anthropic": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "gemini":    bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
+        "groq":      bool(os.getenv("GROQ_API_KEY")),
+        "ollama":    True,  # local, no key needed
     }

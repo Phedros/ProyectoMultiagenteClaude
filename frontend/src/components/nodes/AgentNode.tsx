@@ -4,6 +4,25 @@ import { Bot, Zap, Wrench } from 'lucide-react'
 import { useAgentStore } from '../../store/agentStore'
 import { useExecutionStore } from '../../store/executionStore'
 
+// Short display names for known models
+const MODEL_LABELS: Record<string, string> = {
+  'gpt-4o': 'GPT-4o',
+  'gpt-4o-mini': 'GPT-4o mini',
+  'gpt-3.5-turbo': 'GPT-3.5',
+  'claude-3-5-sonnet-20241022': 'Claude 3.5 Sonnet',
+  'claude-3-5-haiku-20241022': 'Claude 3.5 Haiku',
+  'claude-3-opus-20240229': 'Claude 3 Opus',
+  'gemini/gemini-2.0-flash': 'Gemini 2.0 Flash',
+  'gemini/gemini-1.5-pro': 'Gemini 1.5 Pro',
+  'groq/llama-3.1-70b-versatile': 'Llama 3.1 70B',
+  'groq/mixtral-8x7b-32768': 'Mixtral 8x7B',
+  'groq/gemma2-9b-it': 'Gemma 2 9B',
+  'ollama/llama3': 'Llama 3  (local)',
+  'ollama/mistral': 'Mistral  (local)',
+  'ollama/codellama': 'CodeLlama  (local)',
+  'ollama/phi3': 'Phi-3  (local)',
+}
+
 interface AgentNodeData {
   agentId: string
   label: string
@@ -50,7 +69,9 @@ function AgentNode({ data, selected }: NodeProps) {
           </div>
           <div className="flex items-center gap-2">
             {agent && (
-              <div className="truncate text-xs text-slate-400">{agent.model}</div>
+              <div className="truncate text-xs text-slate-400">
+                {MODEL_LABELS[agent.model] ?? agent.model}
+              </div>
             )}
             {toolCount > 0 && (
               <div className="flex items-center gap-0.5 text-xs text-amber-400">
