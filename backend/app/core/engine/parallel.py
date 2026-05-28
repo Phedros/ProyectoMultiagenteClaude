@@ -21,6 +21,7 @@ async def _collect_agent_output(
         agent_id=agent.id,
         agent_name=agent.name,
         history=history,
+        mcp_configs=agent.mcp_servers or None,
     ):
         internal_events.append(event)
         if event.type == "token":

@@ -7,6 +7,7 @@ from app.models.flow import Flow
 from app.models.agent import Agent
 from app.models.flow_message import FlowMessage
 from app.models.execution_run import ExecutionRun
+from app.models.mcp_server import MCPServer
 from app.core.engine.base import AgentConfig
 from app.core.engine.pipeline import run_pipeline
 from app.core.engine.parallel import run_parallel
@@ -19,6 +20,27 @@ HISTORY_WINDOW = 10  # conversation turns to include as context
 
 def _build_agent_map(agent_ids: list[str], db: Session) -> dict[str, AgentConfig]:
     agents = db.query(Agent).filter(Agent.id.in_(agent_ids)).all()
+
+    # Collect all MCP server ids referenced by any agent in this flow
+    all_mcp_ids: set[str] = set()
+    for a in agents:
+        for sid in (a.mcp_servers or []):
+            all_mcp_ids.add(sid)
+
+    # Bulk-load MCP server configs once
+    mcp_configs_by_id: dict[str, dict] = {}
+    if all_mcp_ids:
+        servers = db.query(MCPServer).filter(MCPServer.id.in_(list(all_mcp_ids))).all()
+        for s in servers:
+            mcp_configs_by_id[s.id] = {
+                "name": s.name,
+                "transport": s.transport,
+                "command": s.command,
+                "args": s.args or [],
+                "env_vars": s.env_vars or {},
+                "url": s.url,
+            }
+
     return {
         a.id: AgentConfig(
             id=a.id,
@@ -27,6 +49,11 @@ def _build_agent_map(agent_ids: list[str], db: Session) -> dict[str, AgentConfig
             model=a.model,
             temperature=a.temperature,
             tools=a.tools or [],
+            mcp_servers=[
+                mcp_configs_by_id[sid]
+                for sid in (a.mcp_servers or [])
+                if sid in mcp_configs_by_id
+            ],
         )
         for a in agents
     }

@@ -10,6 +10,7 @@ class AgentConfig:
     model: str
     temperature: float
     tools: list[str] = field(default_factory=list)
+    mcp_servers: list[dict] = field(default_factory=list)  # full config dicts for MCP servers
 
 
 @dataclass

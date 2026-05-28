@@ -10,9 +10,11 @@ Supported providers (configure via env vars):
 """
 import json
 import litellm
+from contextlib import AsyncExitStack
 from typing import AsyncGenerator
 from app.core.engine.base import ExecutionEvent
 from app.core.tools import get_tool_schemas, execute_tool
+from app.core.mcp_client import list_mcp_tools, call_mcp_tool, mcp_available
 
 # Drop unsupported params (e.g. temperature on some models, tools on basic Ollama)
 litellm.drop_params = True
@@ -60,6 +62,7 @@ async def run_agent_turn(
     agent_id: str = "",
     agent_name: str = "",
     history: list[dict] | None = None,
+    mcp_configs: list[dict] | None = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Run a complete agent turn with optional tool use and conversation history.
@@ -69,12 +72,27 @@ async def run_agent_turn(
              from previous flow executions. Injected between system prompt
              and the current user message.
 
+    mcp_configs: list of MCP server config dicts. Tools from these servers are
+                 discovered at the start of the turn and injected alongside
+                 the agent's normal tools.
+
     Yields ExecutionEvent objects:
       - type="token"       — a streamed text chunk from the model
       - type="tool_call"   — the model is invoking a tool
       - type="tool_result" — the tool result
     """
     schemas = get_tool_schemas(enabled_tools)
+
+    # Discover MCP tools (if any servers configured)
+    # Build a lookup: prefixed_tool_name → server config for routing
+    mcp_tool_map: dict[str, dict] = {}  # "mcp__server__tool" → config dict
+    if mcp_configs and mcp_available():
+        for cfg in mcp_configs:
+            mcp_schemas = await list_mcp_tools(cfg)
+            for schema in mcp_schemas:
+                fname = schema["function"]["name"]
+                mcp_tool_map[fname] = cfg
+            schemas.extend(mcp_schemas)
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -172,7 +190,13 @@ async def run_agent_turn(
                     content=json.dumps({"tool": tool_name, "args": args}),
                 )
 
-                result = await execute_tool(tool_name, args)
+                # Route to MCP server if the tool name has the mcp__ prefix
+                if tool_name in mcp_tool_map:
+                    # Strip the mcp__<server>__ prefix to get the bare tool name
+                    bare_name = "__".join(tool_name.split("__")[2:])
+                    result = await call_mcp_tool(mcp_tool_map[tool_name], bare_name, args)
+                else:
+                    result = await execute_tool(tool_name, args)
 
                 yield ExecutionEvent(
                     type="tool_result",

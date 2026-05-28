@@ -4,8 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy import text, inspect as sa_inspect
 from app.database import engine, Base
-from app.models import agent, flow, flow_message, execution_run  # noqa: F401
-from app.api import agents, flows, execution, memory, runs, settings
+from app.models import agent, flow, flow_message, execution_run, mcp_server  # noqa: F401
+from app.api import agents, flows, execution, memory, runs, settings, mcp
 
 load_dotenv(override=True)
 
@@ -20,6 +20,9 @@ def _run_migrations() -> None:
         with engine.connect() as conn:
             if "tools" not in existing_cols:
                 conn.execute(text("ALTER TABLE agents ADD COLUMN tools TEXT DEFAULT '[]'"))
+                conn.commit()
+            if "mcp_servers" not in existing_cols:
+                conn.execute(text("ALTER TABLE agents ADD COLUMN mcp_servers TEXT DEFAULT '[]'"))
                 conn.commit()
 
     if "execution_runs" in table_names:
@@ -55,6 +58,7 @@ app.include_router(execution.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
 app.include_router(runs.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(mcp.router, prefix="/api")
 
 
 @app.get("/health")

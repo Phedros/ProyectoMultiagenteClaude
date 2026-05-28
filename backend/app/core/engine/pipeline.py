@@ -137,6 +137,7 @@ async def _run_bfs(
                 agent_id=agent.id,
                 agent_name=agent.name,
                 history=history if use_history else None,
+                mcp_configs=agent.mcp_servers or None,
             ):
                 if event.type == "token":
                     accumulated.append(event.content)

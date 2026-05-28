@@ -7,6 +7,7 @@ export interface Agent {
   model: string
   temperature: number
   tools: string[]
+  mcp_servers: string[]
   created_at: string
   updated_at: string | null
 }
@@ -17,6 +18,7 @@ export interface AgentCreate {
   model: string
   temperature: number
   tools: string[]
+  mcp_servers: string[]
 }
 
 export interface Flow {
@@ -135,4 +137,45 @@ export const settingsApi = {
   getKeys: () => request<ProviderKeys>('/settings/keys'),
   setKeys: (data: SetKeysPayload) =>
     request<void>('/settings/keys', { method: 'POST', body: JSON.stringify(data) }),
+}
+
+// ---------------------------------------------------------------------------
+// MCP Servers
+// ---------------------------------------------------------------------------
+
+export interface MCPServer {
+  id: string
+  name: string
+  transport: 'stdio' | 'sse'
+  command: string | null
+  args: string[]
+  env_vars: Record<string, string>
+  url: string | null
+  created_at: string
+}
+
+export interface MCPServerCreate {
+  name: string
+  transport: 'stdio' | 'sse'
+  command?: string
+  args?: string[]
+  env_vars?: Record<string, string>
+  url?: string
+}
+
+export interface MCPTestResult {
+  ok: boolean
+  tool_count?: number
+  tools?: string[]
+  error?: string
+}
+
+export const mcpApi = {
+  list: () => request<MCPServer[]>('/mcp-servers/'),
+  create: (data: MCPServerCreate) =>
+    request<MCPServer>('/mcp-servers/', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<MCPServerCreate>) =>
+    request<MCPServer>(`/mcp-servers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/mcp-servers/${id}`, { method: 'DELETE' }),
+  test: (id: string) => request<MCPTestResult>(`/mcp-servers/${id}/test`, { method: 'POST' }),
 }

@@ -21,6 +21,7 @@ async def _collect_output(
         enabled_tools=agent.tools,
         agent_id=agent.id,
         agent_name=agent.name,
+        mcp_configs=agent.mcp_servers or None,
     ):
         internal_events.append(event)
         if event.type == "token":
@@ -164,6 +165,7 @@ async def run_hierarchical(
         agent_id=supervisor.id,
         agent_name=supervisor.name,
         history=history,  # supervisor sees history for a coherent final answer
+        mcp_configs=supervisor.mcp_servers or None,
     ):
         if event.type == "token":
             tokens.append(event.content)

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit2, X, Check, ChevronDown, Wrench } from 'lucide-react'
+import { Plus, Trash2, Edit2, X, Check, ChevronDown, Wrench, Plug } from 'lucide-react'
 import { useAgentStore } from '../../store/agentStore'
-import { Agent } from '../../services/api'
+import { Agent, mcpApi, MCPServer } from '../../services/api'
 
 // Grouped model list — value is the exact LiteLLM model string
 const MODEL_GROUPS = [
@@ -68,6 +68,7 @@ interface FormState {
   model: string
   temperature: number
   tools: string[]
+  mcp_servers: string[]
 }
 
 const DEFAULT_FORM: FormState = {
@@ -76,6 +77,7 @@ const DEFAULT_FORM: FormState = {
   model: 'gpt-4o-mini',
   temperature: 0.7,
   tools: [],
+  mcp_servers: [],
 }
 
 function toggleTool(tools: string[], toolId: string): string[] {
@@ -88,8 +90,12 @@ export default function AgentPanel() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(DEFAULT_FORM)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
 
   useEffect(() => { fetchAgents() }, [fetchAgents])
+  useEffect(() => {
+    mcpApi.list().then(setMcpServers).catch(() => {})
+  }, [])
 
   const handleSubmit = async () => {
     if (!form.name.trim()) return
@@ -110,6 +116,7 @@ export default function AgentPanel() {
       model: agent.model,
       temperature: agent.temperature,
       tools: agent.tools ?? [],
+      mcp_servers: agent.mcp_servers ?? [],
     })
     setEditingId(agent.id)
     setShowForm(true)
@@ -218,6 +225,44 @@ export default function AgentPanel() {
             </div>
           </div>
 
+          {/* MCP Servers */}
+          {mcpServers.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <Plug className="h-3 w-3 text-slate-400" />
+                <span className="text-xs text-slate-400 font-medium">MCP Servers</span>
+              </div>
+              <div className="space-y-1">
+                {mcpServers.map((s) => {
+                  const active = form.mcp_servers.includes(s.id)
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          mcp_servers: active
+                            ? f.mcp_servers.filter((id) => id !== s.id)
+                            : [...f.mcp_servers, s.id],
+                        }))
+                      }
+                      className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors text-left ${
+                        active
+                          ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                          : 'border-[#2d3148] bg-[#0f1117] text-slate-400 hover:border-[#3d4168] hover:text-slate-300'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${active ? 'bg-cyan-400' : 'bg-slate-600'}`} />
+                      <span className="font-medium truncate">{s.name}</span>
+                      <span className="ml-auto text-[10px] text-slate-600 flex-shrink-0">{s.transport}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-2">
             <button onClick={handleSubmit} className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 transition-colors">
@@ -253,6 +298,12 @@ export default function AgentPanel() {
                       {agent.tools.length}
                     </span>
                   )}
+                  {agent.mcp_servers && agent.mcp_servers.length > 0 && (
+                    <span className="flex items-center gap-0.5 text-cyan-400">
+                      <Plug className="h-2.5 w-2.5" />
+                      {agent.mcp_servers.length}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1 ml-2 flex-shrink-0">
@@ -283,6 +334,19 @@ export default function AgentPanel() {
                       return (
                         <span key={t} className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300">
                           {meta?.icon} {meta?.label ?? t}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+                {agent.mcp_servers && agent.mcp_servers.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {agent.mcp_servers.map((sid) => {
+                      const s = mcpServers.find((x) => x.id === sid)
+                      return (
+                        <span key={sid} className="flex items-center gap-1 rounded bg-cyan-500/10 px-1.5 py-0.5 text-xs text-cyan-300">
+                          <Plug className="h-2.5 w-2.5" />
+                          {s?.name ?? sid.slice(0, 8)}
                         </span>
                       )
                     })}

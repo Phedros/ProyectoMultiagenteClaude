@@ -9,6 +9,7 @@ class AgentBase(BaseModel):
     model: str = "gpt-4o-mini"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: List[str] = Field(default_factory=list)
+    mcp_servers: List[str] = Field(default_factory=list)  # list of MCPServer ids
 
 
 class AgentCreate(AgentBase):
@@ -21,6 +22,7 @@ class AgentUpdate(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     tools: Optional[List[str]] = None
+    mcp_servers: Optional[List[str]] = None
 
 
 class AgentResponse(AgentBase):
