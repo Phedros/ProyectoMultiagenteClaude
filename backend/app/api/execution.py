@@ -121,6 +121,7 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         data = await websocket.receive_text()
         payload = json.loads(data)
         input_text = payload.get("input_text", "")
+        debug_mode = bool(payload.get("debug", False))
 
         if not input_text.strip():
             await websocket.send_text(json.dumps({"type": "error", "content": "input_text is required"}))
@@ -155,6 +156,7 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_cost_usd = 0.0
+        stopped = False
 
         async for event in runner:
             await websocket.send_text(json.dumps(event.to_dict()))
@@ -171,6 +173,31 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
                     total_cost_usd          += usage.get("estimated_cost_usd", 0.0)
                 except Exception:
                     pass
+
+            # Debug mode: pause after each agent completes
+            if debug_mode and event.type == "agent_end":
+                await websocket.send_text(json.dumps({
+                    "type": "step_pause",
+                    "agentId": event.agent_id,
+                    "agentName": event.agent_name,
+                    "content": event.content,
+                }))
+                # Wait for continue or stop from client
+                try:
+                    ctrl = await websocket.receive_text()
+                    ctrl_msg = json.loads(ctrl)
+                    if ctrl_msg.get("type") == "stop":
+                        stopped = True
+                        status = "stopped"
+                        break
+                    # Any other message (type="continue") resumes execution
+                except Exception:
+                    stopped = True
+                    status = "stopped"
+                    break
+
+        if stopped and not final_output:
+            final_output = error_msg or "(stopped by user)"
 
         duration_ms = int((time.monotonic() - start_ms) * 1000)
 

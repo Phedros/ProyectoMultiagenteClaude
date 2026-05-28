@@ -1,5 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Play, Square, Trash2, ChevronDown, Brain, X, History, Clock, CheckCircle, AlertCircle } from 'lucide-react'
+import {
+  Play, Square, Trash2, ChevronDown, Brain, X, History,
+  Clock, CheckCircle, AlertCircle, Bug, StepForward,
+} from 'lucide-react'
 import { useExecutionStore, ExecutionEvent } from '../../store/executionStore'
 import { memoryApi, MemoryMessage, runsApi, ExecutionRun } from '../../services/api'
 
@@ -20,6 +23,7 @@ const EVENT_BADGE_STYLES: Record<string, string> = {
   usage:           'bg-slate-600/30 text-slate-400',
   flow_end:        'bg-emerald-500/20 text-emerald-300',
   error:           'bg-red-500/20 text-red-300',
+  step_pause:      'bg-yellow-500/20 text-yellow-300',
 }
 
 function EventBadge({ type }: { type: string }) {
@@ -120,7 +124,7 @@ function EventRow({ event }: { event: ExecutionEvent }) {
   )
 }
 
-// ── Memory panel ──────────────────────────────────────────────────────────────
+// ── Memory panel ───────────────────────────────────────────────────────────────
 
 function MemoryPanel({ flowId, onCleared }: { flowId: string; onCleared: () => void }) {
   const [messages, setMessages] = useState<MemoryMessage[]>([])
@@ -188,7 +192,7 @@ function MemoryPanel({ flowId, onCleared }: { flowId: string; onCleared: () => v
         <div className="max-h-48 overflow-y-auto border-t border-[#1e2130]">
           {messages.map((msg) => (
             <div key={msg.id} className={`px-3 py-2 border-b border-[#1e2130] ${msg.role === 'user' ? 'bg-[#0f1117]' : 'bg-[#0d0f19]'}`}>
-              <div className="text-xs font-medium mb-0.5 ${msg.role === 'user' ? 'text-indigo-400' : 'text-violet-400'}">
+              <div className={`text-xs font-medium mb-0.5 ${msg.role === 'user' ? 'text-indigo-400' : 'text-violet-400'}`}>
                 {msg.role === 'user' ? '👤 You' : '🤖 Flow'}
               </div>
               <p className="text-xs text-slate-400 leading-relaxed line-clamp-3 whitespace-pre-wrap">
@@ -202,7 +206,7 @@ function MemoryPanel({ flowId, onCleared }: { flowId: string; onCleared: () => v
   )
 }
 
-// ── Runs history panel ────────────────────────────────────────────────────────
+// ── Runs history panel ─────────────────────────────────────────────────────────
 
 function fmtDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`
@@ -328,7 +332,13 @@ function RunsPanel({ flowId, runsKey }: { flowId: string; runsKey: number }) {
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function ExecutionPanel({ flowId }: Props) {
-  const { events, isRunning, finalOutput, startExecution, stopExecution, clearEvents } = useExecutionStore()
+  const {
+    events, isRunning, finalOutput,
+    debugMode, isPaused, pausedAgentName,
+    startExecution, stopExecution, continueStep,
+    setDebugMode, clearEvents,
+  } = useExecutionStore()
+
   const [input, setInput] = useState('')
   const [memoryKey, setMemoryKey] = useState(0)
   const [runsKey, setRunsKey] = useState(0)
@@ -341,8 +351,8 @@ export default function ExecutionPanel({ flowId }: Props) {
     .join('')
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [events.length])
+    if (!isPaused) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [events.length, isPaused])
 
   // Re-fetch memory + runs after each completed run
   useEffect(() => {
@@ -415,6 +425,27 @@ export default function ExecutionPanel({ flowId }: Props) {
           disabled={isRunning}
           onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) handleRun() }}
         />
+
+        {/* Debug toggle */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setDebugMode(!debugMode)}
+            disabled={isRunning}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+              debugMode
+                ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40'
+                : 'text-slate-500 hover:text-slate-300 border border-transparent'
+            }`}
+            title="Step-by-step debug mode: pause after each agent"
+          >
+            <Bug className="h-3 w-3" />
+            Debug
+          </button>
+          {debugMode && (
+            <span className="text-[10px] text-yellow-500/70">pauses after each agent</span>
+          )}
+        </div>
+
         <div className="flex gap-2">
           <button
             onClick={handleRun}
@@ -439,8 +470,36 @@ export default function ExecutionPanel({ flowId }: Props) {
         )}
       </div>
 
+      {/* ── Debug pause banner ─────────────────────────────────────────────── */}
+      {isPaused && (
+        <div className="border-b border-yellow-500/30 bg-yellow-500/10 px-3 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+            <span className="text-xs font-semibold text-yellow-300">
+              Paused{pausedAgentName ? ` — ${pausedAgentName} finished` : ''}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={continueStep}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-yellow-500/20 border border-yellow-500/40 px-3 py-1.5 text-sm font-medium text-yellow-200 hover:bg-yellow-500/30 transition-colors"
+            >
+              <StepForward className="h-4 w-4" />
+              Continue
+            </button>
+            <button
+              onClick={stopExecution}
+              className="flex items-center gap-1 rounded-lg border border-red-500/40 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <Square className="h-4 w-4" />
+              Stop
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Streaming output */}
-      {(isRunning && streamingOutput) && (
+      {(isRunning && !isPaused && streamingOutput) && (
         <div className="border-b border-[#2d3148] bg-[#0f1117] p-3">
           <div className="text-xs text-slate-500 mb-1 flex items-center gap-1.5">
             <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
