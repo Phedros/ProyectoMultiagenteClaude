@@ -14,7 +14,7 @@ class AgentConfig:
 
 @dataclass
 class ExecutionEvent:
-    type: str  # "flow_start"|"agent_start"|"token"|"tool_call"|"tool_result"|"agent_end"|"condition_eval"|"usage"|"flow_end"|"error"
+    type: str  # "flow_start"|"agent_start"|"token"|"tool_call"|"tool_result"|"agent_end"|"condition_eval"|"loop_iter"|"loop_exit"|"usage"|"flow_end"|"error"
     agent_id: str = ""
     agent_name: str = ""
     content: str = ""

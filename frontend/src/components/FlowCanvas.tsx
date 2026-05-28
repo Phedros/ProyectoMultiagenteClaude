@@ -16,11 +16,12 @@ import {
 import '@xyflow/react/dist/style.css'
 import AgentNode from './nodes/AgentNode'
 import ConditionNode from './nodes/ConditionNode'
+import LoopNode from './nodes/LoopNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
-import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload } from 'lucide-react'
+import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw } from 'lucide-react'
 import CanvasContext from '../contexts/CanvasContext'
 
-const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode }
+const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode }
 
 const TOPOLOGY_OPTIONS = [
   { value: 'pipeline', label: 'Pipeline', icon: '→' },
@@ -323,6 +324,19 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
     setNodes((nds) => [...nds, newNode])
   }, [setNodes])
 
+  const handleAddLoopNode = useCallback(() => {
+    const center = rfInstanceRef.current
+      ? rfInstanceRef.current.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      : { x: 0, y: 0 }
+    const newNode: Node = {
+      id: `loop-${++nodeCounter}-${Date.now()}`,
+      type: 'loopNode',
+      position: center,
+      data: { label: 'Loop', max_iterations: 3, exit_condition: '' },
+    }
+    setNodes((nds) => [...nds, newNode])
+  }, [setNodes])
+
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -376,14 +390,24 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
         </div>
 
         {topology === 'pipeline' && (
-          <button
-            onClick={handleAddConditionNode}
-            title="Add a condition (if/else) node to the canvas"
-            className="flex items-center gap-1.5 rounded-lg border border-amber-600/50 px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            + Condition
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={handleAddConditionNode}
+              title="Add a condition (if/else) node to the canvas"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-600/50 px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              + Condition
+            </button>
+            <button
+              onClick={handleAddLoopNode}
+              title="Add a loop node (repeat N times / until condition)"
+              className="flex items-center gap-1.5 rounded-lg border border-cyan-600/50 px-3 py-1.5 text-xs text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              + Loop
+            </button>
+          </div>
         )}
 
         <div className="ml-auto flex items-center gap-2">

@@ -1,32 +1,23 @@
 import re
 from collections import defaultdict, deque
-from typing import AsyncGenerator, List, Dict, Any, Optional
+from typing import AsyncGenerator, List, Dict, Any, Optional, Set
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn
 
 
 # ---------------------------------------------------------------------------
-# Condition evaluation
+# Condition evaluation  (shared by conditionNode and loopNode exit_condition)
 # ---------------------------------------------------------------------------
-
-CONDITION_HELP = (
-    "Syntax: <op>:<value>  —  ops: contains, not_contains, starts_with, "
-    "ends_with, regex, length_gt, length_lt"
-)
-
 
 def evaluate_condition(condition: str, text: str) -> bool:
     """
     Evaluate a simple text condition against *text*.  Returns True/False.
 
-    Supported syntax (all case-insensitive for the value part):
-        contains:word
-        not_contains:word
-        starts_with:prefix
-        ends_with:suffix
+    Supported syntax:
+        contains:word          not_contains:word
+        starts_with:prefix     ends_with:suffix
         regex:pattern          (re.IGNORECASE applied)
-        length_gt:N
-        length_lt:N
+        length_gt:N            length_lt:N
     """
     condition = condition.strip()
     if ":" not in condition:
@@ -36,115 +27,98 @@ def evaluate_condition(condition: str, text: str) -> bool:
     op = op.strip().lower()
     value = value.strip()
 
-    if op == "contains":
-        return value.lower() in text.lower()
-    if op == "not_contains":
-        return value.lower() not in text.lower()
-    if op == "starts_with":
-        return text.lower().startswith(value.lower())
-    if op == "ends_with":
-        return text.lower().endswith(value.lower())
+    if op == "contains":       return value.lower() in text.lower()
+    if op == "not_contains":   return value.lower() not in text.lower()
+    if op == "starts_with":    return text.lower().startswith(value.lower())
+    if op == "ends_with":      return text.lower().endswith(value.lower())
     if op == "regex":
-        try:
-            return bool(re.search(value, text, re.IGNORECASE))
-        except re.error:
-            return False
+        try:   return bool(re.search(value, text, re.IGNORECASE))
+        except re.error: return False
     if op == "length_gt":
-        try:
-            return len(text) > int(value)
-        except ValueError:
-            return False
+        try:   return len(text) > int(value)
+        except ValueError: return False
     if op == "length_lt":
-        try:
-            return len(text) < int(value)
-        except ValueError:
-            return False
+        try:   return len(text) < int(value)
+        except ValueError: return False
 
     return False
 
 
 # ---------------------------------------------------------------------------
-# Pipeline runner
+# Helper: collect all descendants of a set of nodes (BFS, bounded by allowed set)
 # ---------------------------------------------------------------------------
 
-async def run_pipeline(
-    nodes: List[Dict[str, Any]],
-    edges: List[Dict[str, Any]],
+def _descendants(
+    start_ids: List[str],
+    adj: Dict[str, List[tuple]],
+    stop_at: Set[str] | None = None,
+) -> Set[str]:
+    """Return all nodes reachable from start_ids via adj, not crossing stop_at."""
+    visited: Set[str] = set()
+    q: deque = deque(start_ids)
+    while q:
+        nid = q.popleft()
+        if nid in visited:
+            continue
+        if stop_at and nid in stop_at:
+            continue
+        visited.add(nid)
+        for succ_id, _ in adj.get(nid, []):
+            q.append(succ_id)
+    return visited
+
+
+# ---------------------------------------------------------------------------
+# Core BFS: run a (sub-)graph, yielding ExecutionEvents
+# ---------------------------------------------------------------------------
+
+async def _run_bfs(
+    start_ids: List[str],
+    allowed_ids: Set[str] | None,           # None = unrestricted (main graph)
+    node_map: Dict[str, Dict[str, Any]],
+    adj: Dict[str, List[tuple]],
     agents_by_id: Dict[str, AgentConfig],
-    initial_input: str,
-    history: Optional[List[Dict]] = None,
+    initial_text: str,
+    history: Optional[List[Dict]],
+    first_agent_done: list,                 # mutable box so caller can track it
+    final_output_box: list,                 # mutable box: [current_final_output]
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
-    Pipeline: output of agent N becomes input of agent N+1.
+    Generic BFS traversal used by both the outer pipeline and the loop body.
 
-    Supports two node types:
-      - agentNode  : runs the associated LLM agent
-      - conditionNode : evaluates a text condition and routes to the "true"
-                        or "false" outgoing edge (identified by sourceHandle)
+    *allowed_ids* — if not None, BFS skips any node not in this set (used to
+    restrict the body of a loop to its own sub-graph).
 
-    The FIRST agent to execute receives the full conversation history.
-    Subsequent agents receive no history (they work on the chain output).
+    *first_agent_done* / *final_output_box* — single-element lists used as
+    mutable boxes so callers can share state across recursive calls.
     """
 
-    # --- build full node map ------------------------------------------------
-    valid_types = {"agentNode", "conditionNode"}
-    node_map: Dict[str, Dict[str, Any]] = {}
-    for n in nodes:
-        if n.get("type") in valid_types:
-            node_map[n["id"]] = n
-
-    if not node_map:
-        yield ExecutionEvent(type="error", content="No nodes found in flow")
-        return
-
-    # --- build adjacency: node_id -> [(target_id, source_handle)] -----------
-    # source_handle is "true"/"false" for condition nodes, or None for agent→agent
-    adj: Dict[str, List[tuple]] = defaultdict(list)
-    in_degree: Dict[str, int] = defaultdict(int)
-
-    for e in edges:
-        src, tgt = e.get("source", ""), e.get("target", "")
-        if src in node_map and tgt in node_map:
-            handle = e.get("sourceHandle") or None
-            adj[src].append((tgt, handle))
-            in_degree[tgt] += 1
-
-    # --- find root nodes (in-degree 0) --------------------------------------
-    roots = [nid for nid in node_map if in_degree.get(nid, 0) == 0]
-    if not roots:
-        yield ExecutionEvent(type="error", content="Flow has no starting node (cycle detected?)")
-        return
-
-    agent_count = sum(1 for n in node_map.values() if n.get("type") == "agentNode")
-    yield ExecutionEvent(
-        type="flow_start",
-        content=f"Starting pipeline with {agent_count} agent(s)",
-    )
-
-    # --- BFS traversal -------------------------------------------------------
-    # Queue items: (node_id, current_text, is_first_agent)
-    queue: deque = deque((root, initial_input, True) for root in roots)
-    first_agent_done = False
-    final_output = initial_input
+    # Queue: (node_id, current_text)
+    queue: deque = deque((nid, initial_text) for nid in start_ids)
 
     while queue:
-        node_id, current_text, is_first = queue.popleft()
+        node_id, current_text = queue.popleft()
+
+        # Respect allowed-node boundary
+        if allowed_ids is not None and node_id not in allowed_ids:
+            continue
+
         node = node_map.get(node_id)
         if node is None:
             continue
 
         node_type = node.get("type")
 
-        # ── Agent node ──────────────────────────────────────────────────────
+        # ── Agent node ───────────────────────────────────────────────────────
         if node_type == "agentNode":
             agent_id = node["data"].get("agentId", "")
-            agent = agents_by_id.get(agent_id)
+            agent    = agents_by_id.get(agent_id)
             if agent is None:
                 yield ExecutionEvent(type="error", content=f"Agent {agent_id!r} not found")
                 continue
 
-            use_history = (not first_agent_done) and bool(history)
-            first_agent_done = True
+            use_history = (not first_agent_done[0]) and bool(history)
+            first_agent_done[0] = True
 
             yield ExecutionEvent(
                 type="agent_start",
@@ -176,17 +150,18 @@ async def run_pipeline(
                 content=output,
             )
 
-            final_output = output
+            final_output_box[0] = output
 
-            for (succ_id, handle) in adj[node_id]:
-                queue.append((succ_id, output, False))
+            for (succ_id, _handle) in adj.get(node_id, []):
+                if allowed_ids is None or succ_id in allowed_ids:
+                    queue.append((succ_id, output))
 
-        # ── Condition node ───────────────────────────────────────────────────
+        # ── Condition node ────────────────────────────────────────────────────
         elif node_type == "conditionNode":
             condition = node["data"].get("condition", "")
-            label = node["data"].get("label", "Condition")
-            result = evaluate_condition(condition, current_text)
-            chosen = "true" if result else "false"
+            label     = node["data"].get("label", "Condition")
+            result    = evaluate_condition(condition, current_text)
+            chosen    = "true" if result else "false"
 
             yield ExecutionEvent(
                 type="condition_eval",
@@ -194,8 +169,145 @@ async def run_pipeline(
                 content=f"[{condition}] → {chosen.upper()}",
             )
 
-            for (succ_id, handle) in adj[node_id]:
+            for (succ_id, handle) in adj.get(node_id, []):
                 if handle == chosen:
-                    queue.append((succ_id, current_text, is_first))
+                    if allowed_ids is None or succ_id in allowed_ids:
+                        queue.append((succ_id, current_text))
 
-    yield ExecutionEvent(type="flow_end", content=final_output)
+        # ── Loop node ────────────────────────────────────────────────────────
+        elif node_type == "loopNode":
+            max_iter   = min(max(int(node["data"].get("max_iterations", 3)), 1), 20)
+            exit_cond  = (node["data"].get("exit_condition") or "").strip()
+            label      = node["data"].get("label", "Loop")
+
+            body_starts = [t for t, h in adj.get(node_id, []) if h == "body"]
+            exit_starts = [t for t, h in adj.get(node_id, []) if h == "exit"]
+
+            if not body_starts:
+                # Empty loop body — pass through to exit
+                for exit_id in exit_starts:
+                    queue.append((exit_id, current_text))
+                continue
+
+            # Compute the body sub-graph: descendants of body_starts
+            # (stop at loop node itself to avoid accidental re-entry)
+            body_ids = _descendants(
+                body_starts,
+                adj,
+                stop_at={node_id} | set(exit_starts),
+            )
+
+            loop_text = current_text
+
+            for iteration in range(max_iter):
+                yield ExecutionEvent(
+                    type="loop_iter",
+                    agent_name=label,
+                    content=f"Iteration {iteration + 1} / {max_iter}",
+                )
+
+                # Run the body sub-graph for this iteration
+                body_output_box = [loop_text]
+                async for event in _run_bfs(
+                    start_ids=body_starts,
+                    allowed_ids=body_ids,
+                    node_map=node_map,
+                    adj=adj,
+                    agents_by_id=agents_by_id,
+                    initial_text=loop_text,
+                    history=None,              # no history inside loop body
+                    first_agent_done=[True],   # don't inject history inside loop
+                    final_output_box=body_output_box,
+                ):
+                    yield event
+
+                loop_text = body_output_box[0]
+                final_output_box[0] = loop_text
+
+                # Check exit condition
+                if exit_cond and evaluate_condition(exit_cond, loop_text):
+                    yield ExecutionEvent(
+                        type="loop_exit",
+                        agent_name=label,
+                        content=f"Exit condition met after iteration {iteration + 1}",
+                    )
+                    break
+
+            # Continue to exit successors with final loop output
+            for exit_id in exit_starts:
+                queue.append((exit_id, loop_text))
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+async def run_pipeline(
+    nodes: List[Dict[str, Any]],
+    edges: List[Dict[str, Any]],
+    agents_by_id: Dict[str, AgentConfig],
+    initial_input: str,
+    history: Optional[List[Dict]] = None,
+) -> AsyncGenerator[ExecutionEvent, None]:
+    """
+    Pipeline topology with BFS traversal.
+
+    Supported node types:
+      - agentNode     : run an LLM agent; pass output downstream
+      - conditionNode : evaluate text condition; route to "true" or "false" edge
+      - loopNode      : repeat body sub-graph up to N times (or until exit_condition)
+    """
+
+    valid_types = {"agentNode", "conditionNode", "loopNode"}
+    node_map: Dict[str, Dict[str, Any]] = {
+        n["id"]: n for n in nodes if n.get("type") in valid_types
+    }
+
+    if not node_map:
+        yield ExecutionEvent(type="error", content="No nodes found in flow")
+        return
+
+    # Build adjacency: node_id -> [(target_id, source_handle)]
+    adj: Dict[str, List[tuple]] = defaultdict(list)
+    in_degree: Dict[str, int]   = defaultdict(int)
+
+    for e in edges:
+        src, tgt = e.get("source", ""), e.get("target", "")
+        if src in node_map and tgt in node_map:
+            handle = e.get("sourceHandle") or None
+            adj[src].append((tgt, handle))
+            in_degree[tgt] += 1
+
+    roots = [nid for nid in node_map if in_degree.get(nid, 0) == 0]
+    if not roots:
+        yield ExecutionEvent(
+            type="error",
+            content="Flow has no starting node (possible cycle at the top level?)",
+        )
+        return
+
+    agent_count = sum(1 for n in node_map.values() if n.get("type") == "agentNode")
+    loop_count  = sum(1 for n in node_map.values() if n.get("type") == "loopNode")
+    extras = f", {loop_count} loop(s)" if loop_count else ""
+    yield ExecutionEvent(
+        type="flow_start",
+        content=f"Starting pipeline with {agent_count} agent(s){extras}",
+    )
+
+    first_agent_done = [False]
+    final_output_box = [initial_input]
+
+    async for event in _run_bfs(
+        start_ids=roots,
+        allowed_ids=None,
+        node_map=node_map,
+        adj=adj,
+        agents_by_id=agents_by_id,
+        initial_text=initial_input,
+        history=history,
+        first_agent_done=first_agent_done,
+        final_output_box=final_output_box,
+    ):
+        yield event
+
+    yield ExecutionEvent(type="flow_end", content=final_output_box[0])

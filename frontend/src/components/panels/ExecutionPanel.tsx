@@ -15,6 +15,8 @@ const EVENT_BADGE_STYLES: Record<string, string> = {
   tool_result:     'bg-teal-500/20 text-teal-300',
   agent_end:       'bg-purple-500/20 text-purple-300',
   condition_eval:  'bg-orange-500/20 text-orange-300',
+  loop_iter:       'bg-cyan-500/20 text-cyan-300',
+  loop_exit:       'bg-teal-500/20 text-teal-300',
   usage:           'bg-slate-600/30 text-slate-400',
   flow_end:        'bg-emerald-500/20 text-emerald-300',
   error:           'bg-red-500/20 text-red-300',
