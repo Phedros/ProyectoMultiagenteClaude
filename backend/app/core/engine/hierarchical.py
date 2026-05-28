@@ -3,18 +3,27 @@ import json
 from typing import AsyncGenerator, List, Dict, Any, Optional
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn, call_agent_non_streaming
+from app.core.prompt_utils import render_prompt
 
 
 async def _collect_output(
     agent: AgentConfig,
     input_text: str,
+    flow_input: str = "",
 ) -> tuple[AgentConfig, str, list[ExecutionEvent]]:
     """Run a worker agent to completion, collecting events and final text."""
     internal_events: list[ExecutionEvent] = []
     tokens: list[str] = []
 
+    resolved_prompt = render_prompt(
+        agent.system_prompt,
+        flow_input=flow_input or input_text,
+        previous_output="",
+        agent_name=agent.name,
+    )
+
     async for event in run_agent_turn(
-        system_prompt=agent.system_prompt,
+        system_prompt=resolved_prompt,
         user_message=input_text,
         model=agent.model,
         temperature=agent.temperature,
@@ -128,7 +137,7 @@ async def run_hierarchical(
             type="agent_start", agent_id=worker.id, agent_name=worker.name, content=task
         )
 
-    gather_tasks = [_collect_output(worker, task) for worker, task in zip(workers, sub_tasks)]
+    gather_tasks = [_collect_output(worker, task, flow_input=initial_input) for worker, task in zip(workers, sub_tasks)]
     worker_results = await asyncio.gather(*gather_tasks)
 
     worker_outputs: Dict[str, str] = {}
@@ -155,9 +164,16 @@ async def run_hierarchical(
         content=consolidation_input,
     )
 
+    supervisor_consolidation_prompt = render_prompt(
+        supervisor.system_prompt,
+        flow_input=initial_input,
+        previous_output=consolidation_input,
+        agent_name=supervisor.name,
+    )
+
     tokens: list[str] = []
     async for event in run_agent_turn(
-        system_prompt=supervisor.system_prompt,
+        system_prompt=supervisor_consolidation_prompt,
         user_message=consolidation_prompt,
         model=supervisor.model,
         temperature=supervisor.temperature,

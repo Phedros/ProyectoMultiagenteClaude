@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 from typing import AsyncGenerator, List, Dict, Any, Optional, Set
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn
+from app.core.prompt_utils import render_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,8 @@ async def _run_bfs(
     history: Optional[List[Dict]],
     first_agent_done: list,                 # mutable box so caller can track it
     final_output_box: list,                 # mutable box: [current_final_output]
+    flow_input: str = "",                   # original top-level input for {{flow_input}}
+    iteration: int = 1,                     # loop iteration number for {{iteration}}
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Generic BFS traversal used by both the outer pipeline and the loop body.
@@ -91,13 +94,15 @@ async def _run_bfs(
 
     *first_agent_done* / *final_output_box* — single-element lists used as
     mutable boxes so callers can share state across recursive calls.
+
+    *flow_input* / *iteration* — passed to render_prompt for {{variable}} interpolation.
     """
 
-    # Queue: (node_id, current_text)
-    queue: deque = deque((nid, initial_text) for nid in start_ids)
+    # Queue: (node_id, current_text, previous_output)
+    queue: deque = deque((nid, initial_text, "") for nid in start_ids)
 
     while queue:
-        node_id, current_text = queue.popleft()
+        node_id, current_text, prev_output = queue.popleft()
 
         # Respect allowed-node boundary
         if allowed_ids is not None and node_id not in allowed_ids:
@@ -120,6 +125,15 @@ async def _run_bfs(
             use_history = (not first_agent_done[0]) and bool(history)
             first_agent_done[0] = True
 
+            # Interpolate {{variables}} in system prompt
+            resolved_prompt = render_prompt(
+                agent.system_prompt,
+                flow_input=flow_input or initial_text,
+                previous_output=prev_output,
+                agent_name=agent.name,
+                iteration=iteration,
+            )
+
             yield ExecutionEvent(
                 type="agent_start",
                 agent_id=agent.id,
@@ -129,7 +143,7 @@ async def _run_bfs(
 
             accumulated: list[str] = []
             async for event in run_agent_turn(
-                system_prompt=agent.system_prompt,
+                system_prompt=resolved_prompt,
                 user_message=current_text,
                 model=agent.model,
                 temperature=agent.temperature,
@@ -155,7 +169,7 @@ async def _run_bfs(
 
             for (succ_id, _handle) in adj.get(node_id, []):
                 if allowed_ids is None or succ_id in allowed_ids:
-                    queue.append((succ_id, output))
+                    queue.append((succ_id, output, output))
 
         # ── Condition node ────────────────────────────────────────────────────
         elif node_type == "conditionNode":
@@ -173,7 +187,7 @@ async def _run_bfs(
             for (succ_id, handle) in adj.get(node_id, []):
                 if handle == chosen:
                     if allowed_ids is None or succ_id in allowed_ids:
-                        queue.append((succ_id, current_text))
+                        queue.append((succ_id, current_text, prev_output))
 
         # ── Loop node ────────────────────────────────────────────────────────
         elif node_type == "loopNode":
@@ -187,7 +201,7 @@ async def _run_bfs(
             if not body_starts:
                 # Empty loop body — pass through to exit
                 for exit_id in exit_starts:
-                    queue.append((exit_id, current_text))
+                    queue.append((exit_id, current_text, prev_output))
                 continue
 
             # Compute the body sub-graph: descendants of body_starts
@@ -200,11 +214,11 @@ async def _run_bfs(
 
             loop_text = current_text
 
-            for iteration in range(max_iter):
+            for loop_iter in range(max_iter):
                 yield ExecutionEvent(
                     type="loop_iter",
                     agent_name=label,
-                    content=f"Iteration {iteration + 1} / {max_iter}",
+                    content=f"Iteration {loop_iter + 1} / {max_iter}",
                 )
 
                 # Run the body sub-graph for this iteration
@@ -219,6 +233,8 @@ async def _run_bfs(
                     history=None,              # no history inside loop body
                     first_agent_done=[True],   # don't inject history inside loop
                     final_output_box=body_output_box,
+                    flow_input=flow_input,
+                    iteration=loop_iter + 1,
                 ):
                     yield event
 
@@ -230,13 +246,13 @@ async def _run_bfs(
                     yield ExecutionEvent(
                         type="loop_exit",
                         agent_name=label,
-                        content=f"Exit condition met after iteration {iteration + 1}",
+                        content=f"Exit condition met after iteration {loop_iter + 1}",
                     )
                     break
 
             # Continue to exit successors with final loop output
             for exit_id in exit_starts:
-                queue.append((exit_id, loop_text))
+                queue.append((exit_id, loop_text, loop_text))
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +324,8 @@ async def run_pipeline(
         history=history,
         first_agent_done=first_agent_done,
         final_output_box=final_output_box,
+        flow_input=initial_input,
+        iteration=1,
     ):
         yield event
 

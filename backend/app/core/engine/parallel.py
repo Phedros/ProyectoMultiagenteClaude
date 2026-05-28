@@ -2,6 +2,7 @@ import asyncio
 from typing import AsyncGenerator, List, Dict, Any, Optional
 from app.core.engine.base import AgentConfig, ExecutionEvent
 from app.core.llm import run_agent_turn
+from app.core.prompt_utils import render_prompt
 
 
 async def _collect_agent_output(
@@ -12,8 +13,15 @@ async def _collect_agent_output(
     internal_events: list[ExecutionEvent] = []
     tokens: list[str] = []
 
+    resolved_prompt = render_prompt(
+        agent.system_prompt,
+        flow_input=input_text,
+        previous_output="",
+        agent_name=agent.name,
+    )
+
     async for event in run_agent_turn(
-        system_prompt=agent.system_prompt,
+        system_prompt=resolved_prompt,
         user_message=input_text,
         model=agent.model,
         temperature=agent.temperature,
