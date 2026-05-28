@@ -19,6 +19,7 @@ import ConditionNode from './nodes/ConditionNode'
 import LoopNode from './nodes/LoopNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
 import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
 import CanvasContext from '../contexts/CanvasContext'
 
 const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode }
@@ -258,8 +259,10 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
       onFlowSaved(saved.id)
       const updated = await flowsApi.list()
       setSavedFlows(updated)
+      toast.success(`Flow "${flowName}" saved`)
     } catch (err) {
       console.error('Failed to save flow:', err)
+      toast.error('Failed to save flow')
     } finally {
       setIsSaving(false)
     }
@@ -285,9 +288,11 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
 
   const handleDeleteFlow = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    const flow = savedFlows.find((f) => f.id === id)
     await flowsApi.delete(id)
     setSavedFlows((fs) => fs.filter((f) => f.id !== id))
     if (activeFlowId === id) handleNewFlow()
+    toast.success(`Flow "${flow?.name ?? 'flow'}" deleted`)
   }
 
   const handleExport = useCallback(() => {

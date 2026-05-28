@@ -7,6 +7,7 @@ import {
   CheckCircle, Circle, Eye, EyeOff, Save,
   Plus, Trash2, Zap, ChevronDown, ChevronUp, Loader2, X,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 // ---------------------------------------------------------------------------
 // Provider keys section
@@ -142,6 +143,9 @@ export default function SettingsPanel() {
       await loadKeys()
       setSavedMsg(true)
       setTimeout(() => setSavedMsg(false), 2500)
+      toast.success('API keys saved')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save keys')
     } finally {
       setSaving(false)
     }
@@ -163,34 +167,39 @@ export default function SettingsPanel() {
       await loadMCP()
       setShowMCPForm(false)
       setMcpForm(emptyMCPForm())
+      toast.success(`MCP server "${mcpForm.name}" created`)
     } catch (e: unknown) {
-      setMcpError(e instanceof Error ? e.message : 'Failed to create server')
+      const msg = e instanceof Error ? e.message : 'Failed to create server'
+      setMcpError(msg)
+      toast.error(msg)
     } finally {
       setMcpSaving(false)
     }
   }
 
   const handleMCPDelete = async (id: string) => {
+    const s = mcpServers.find((x) => x.id === id)
     await mcpApi.delete(id)
-    setMcpServers((s) => s.filter((x) => x.id !== id))
+    setMcpServers((list) => list.filter((x) => x.id !== id))
     setTestResults((r) => { const copy = { ...r }; delete copy[id]; return copy })
+    toast.success(`MCP server "${s?.name ?? id.slice(0, 8)}" deleted`)
   }
 
   const handleMCPTest = async (id: string) => {
     setTestingId(id)
+    const s = mcpServers.find((x) => x.id === id)
     try {
       const result = await mcpApi.test(id)
-      setTestResults((r) => ({
-        ...r,
-        [id]: result.ok
-          ? { ok: true, msg: `${result.tool_count} tool(s): ${result.tools?.join(', ')}` }
-          : { ok: false, msg: result.error || 'Connection failed' },
-      }))
+      const msg = result.ok
+        ? `${result.tool_count} tool(s): ${result.tools?.join(', ')}`
+        : (result.error || 'Connection failed')
+      setTestResults((r) => ({ ...r, [id]: { ok: result.ok, msg } }))
+      if (result.ok) toast.success(`${s?.name}: ${msg}`)
+      else toast.error(`${s?.name}: ${msg}`)
     } catch (e: unknown) {
-      setTestResults((r) => ({
-        ...r,
-        [id]: { ok: false, msg: e instanceof Error ? e.message : 'Error' },
-      }))
+      const msg = e instanceof Error ? e.message : 'Error'
+      setTestResults((r) => ({ ...r, [id]: { ok: false, msg } }))
+      toast.error(`${s?.name}: ${msg}`)
     } finally {
       setTestingId(null)
     }

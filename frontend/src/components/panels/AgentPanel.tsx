@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Plus, Trash2, Edit2, X, Check, ChevronDown, Wrench, Plug } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Trash2, Edit2, X, Check, ChevronDown, Wrench, Plug, FlaskConical, Square, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useAgentStore } from '../../store/agentStore'
 import { Agent, mcpApi, MCPServer } from '../../services/api'
 
@@ -84,12 +85,125 @@ function toggleTool(tools: string[], toolId: string): string[] {
   return tools.includes(toolId) ? tools.filter((t) => t !== toolId) : [...tools, toolId]
 }
 
+// ---------------------------------------------------------------------------
+// Inline agent test panel
+// ---------------------------------------------------------------------------
+
+function AgentTestPanel({ agentId, agentName, onClose }: {
+  agentId: string
+  agentName: string
+  onClose: () => void
+}) {
+  const [prompt, setPrompt] = useState('')
+  const [output, setOutput] = useState('')
+  const [streaming, setStreaming] = useState('')
+  const [isRunning, setIsRunning] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [streaming, output])
+
+  const handleRun = () => {
+    if (!prompt.trim() || isRunning) return
+    setOutput('')
+    setStreaming('')
+    setIsRunning(true)
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${protocol}//${window.location.host}/api/agents/${agentId}/test`)
+    wsRef.current = ws
+
+    ws.onopen = () => ws.send(JSON.stringify({ prompt }))
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data)
+      if (msg.type === 'token') {
+        setStreaming((s) => s + msg.content)
+      } else if (msg.type === 'flow_end') {
+        setOutput(msg.content)
+        setStreaming('')
+        setIsRunning(false)
+      } else if (msg.type === 'error') {
+        toast.error(`Test error: ${msg.content}`)
+        setIsRunning(false)
+      }
+    }
+
+    ws.onerror = () => { toast.error('WebSocket error'); setIsRunning(false) }
+    ws.onclose = () => setIsRunning(false)
+  }
+
+  const handleStop = () => {
+    wsRef.current?.close()
+    setIsRunning(false)
+  }
+
+  return (
+    <div className="border-t border-[#2d3148] bg-[#0d0f19] p-2.5 space-y-2">
+      <div className="flex items-center gap-1.5">
+        <FlaskConical className="h-3 w-3 text-indigo-400" />
+        <span className="text-xs font-semibold text-indigo-300">Test {agentName}</span>
+        <button onClick={onClose} className="ml-auto text-slate-600 hover:text-slate-400">
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+
+      <div className="flex gap-1.5">
+        <input
+          className="flex-1 rounded-lg border border-[#2d3148] bg-[#141624] px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:border-indigo-500 focus:outline-none"
+          placeholder="Enter a test prompt…"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          disabled={isRunning}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleRun() }}
+        />
+        {isRunning ? (
+          <button
+            onClick={handleStop}
+            className="flex items-center gap-1 rounded-lg border border-red-500/40 px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <Square className="h-3 w-3" />
+          </button>
+        ) : (
+          <button
+            onClick={handleRun}
+            disabled={!prompt.trim()}
+            className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors"
+          >
+            <FlaskConical className="h-3 w-3" />
+            Run
+          </button>
+        )}
+      </div>
+
+      {(isRunning || output || streaming) && (
+        <div className="rounded-lg border border-[#2d3148] bg-[#141624] p-2 max-h-40 overflow-y-auto">
+          {isRunning && !streaming && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
+            </div>
+          )}
+          {(streaming || output) && (
+            <pre className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed font-mono">
+              {streaming || output}
+            </pre>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AgentPanel() {
   const { agents, fetchAgents, createAgent, updateAgent, deleteAgent } = useAgentStore()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(DEFAULT_FORM)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [testingAgentId, setTestingAgentId] = useState<string | null>(null)
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
 
   useEffect(() => { fetchAgents() }, [fetchAgents])
@@ -99,14 +213,20 @@ export default function AgentPanel() {
 
   const handleSubmit = async () => {
     if (!form.name.trim()) return
-    if (editingId) {
-      await updateAgent(editingId, form)
-      setEditingId(null)
-    } else {
-      await createAgent(form)
+    try {
+      if (editingId) {
+        await updateAgent(editingId, form)
+        setEditingId(null)
+        toast.success(`Agent "${form.name}" updated`)
+      } else {
+        await createAgent(form)
+        toast.success(`Agent "${form.name}" created`)
+      }
+      setForm(DEFAULT_FORM)
+      setShowForm(false)
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save agent')
     }
-    setForm(DEFAULT_FORM)
-    setShowForm(false)
   }
 
   const startEdit = (agent: Agent) => {
@@ -308,13 +428,27 @@ export default function AgentPanel() {
               </div>
               <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                 <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTestingAgentId(testingAgentId === agent.id ? null : agent.id)
+                  }}
+                  title="Test agent"
+                  className={`rounded p-1 transition-colors ${testingAgentId === agent.id ? 'text-indigo-400' : 'text-slate-500 hover:text-indigo-400'}`}
+                >
+                  <FlaskConical className="h-3.5 w-3.5" />
+                </button>
+                <button
                   onClick={(e) => { e.stopPropagation(); startEdit(agent) }}
                   className="rounded p-1 text-slate-500 hover:text-indigo-400 transition-colors"
                 >
                   <Edit2 className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); deleteAgent(agent.id) }}
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    await deleteAgent(agent.id)
+                    toast.success(`Agent "${agent.name}" deleted`)
+                  }}
                   className="rounded p-1 text-slate-500 hover:text-red-400 transition-colors"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -367,6 +501,15 @@ export default function AgentPanel() {
             >
               ⠿ Drag to canvas
             </div>
+
+            {/* Inline test panel */}
+            {testingAgentId === agent.id && (
+              <AgentTestPanel
+                agentId={agent.id}
+                agentName={agent.name}
+                onClose={() => setTestingAgentId(null)}
+              />
+            )}
           </div>
         ))}
       </div>

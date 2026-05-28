@@ -3,6 +3,7 @@ import {
   Play, Square, Trash2, ChevronDown, Brain, X, History,
   Clock, CheckCircle, AlertCircle, Bug, StepForward,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useExecutionStore, ExecutionEvent } from '../../store/executionStore'
 import { memoryApi, MemoryMessage, runsApi, ExecutionRun } from '../../services/api'
 
@@ -354,13 +355,23 @@ export default function ExecutionPanel({ flowId }: Props) {
     if (!isPaused) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events.length, isPaused])
 
-  // Re-fetch memory + runs after each completed run
+  // Re-fetch memory + runs + show toast after each completed run
+  const prevRunningRef = useRef(false)
   useEffect(() => {
-    if (!isRunning && finalOutput) {
+    const wasRunning = prevRunningRef.current
+    prevRunningRef.current = isRunning
+    if (wasRunning && !isRunning) {
       setMemoryKey((k) => k + 1)
       setRunsKey((k) => k + 1)
+      // Check last event for error/flow_end
+      const lastError = [...events].reverse().find((e) => e.type === 'error')
+      if (lastError) {
+        toast.error(`Flow error: ${lastError.content.slice(0, 80)}`)
+      } else if (finalOutput) {
+        toast.success('Flow completed')
+      }
     }
-  }, [isRunning, finalOutput])
+  }, [isRunning, finalOutput, events])
 
   const handleRun = () => {
     if (!flowId || !input.trim() || isRunning) return
