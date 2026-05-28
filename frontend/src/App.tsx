@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 import AgentPanel from './components/panels/AgentPanel'
 import ExecutionPanel from './components/panels/ExecutionPanel'
+import SettingsPanel from './components/panels/SettingsPanel'
 import FlowCanvas from './components/FlowCanvas'
-import { Bot, Cpu, Zap } from 'lucide-react'
+import { Bot, Cpu, Zap, Settings } from 'lucide-react'
 
-type SideTab = 'agents' | 'execution'
+type SideTab = 'agents' | 'execution' | 'settings'
 
 export default function App() {
   const [activeFlowId, setActiveFlowId] = useState<string | null>(null)
@@ -55,14 +56,23 @@ export default function App() {
               <Zap className="h-3.5 w-3.5" />
               Execution
             </button>
+            <button
+              onClick={() => setSideTab('settings')}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+                sideTab === 'settings'
+                  ? 'border-b-2 border-indigo-500 text-indigo-400'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+              title="API Keys & Settings"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           <div className="flex-1 overflow-hidden">
-            {sideTab === 'agents' ? (
-              <AgentPanel />
-            ) : (
-              <ExecutionPanel flowId={activeFlowId} />
-            )}
+            {sideTab === 'agents' && <AgentPanel />}
+            {sideTab === 'execution' && <ExecutionPanel flowId={activeFlowId} />}
+            {sideTab === 'settings' && <SettingsPanel />}
           </div>
         </aside>
 

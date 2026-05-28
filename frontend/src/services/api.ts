@@ -112,3 +112,24 @@ export const runsApi = {
   list: (flowId: string) => request<ExecutionRun[]>(`/flows/${flowId}/runs`),
   delete: (runId: string) => request<void>(`/runs/${runId}`, { method: 'DELETE' }),
 }
+
+export interface ProviderKeys {
+  openai: boolean
+  anthropic: boolean
+  gemini: boolean
+  groq: boolean
+  ollama: boolean
+}
+
+export interface SetKeysPayload {
+  openai?: string
+  anthropic?: string
+  gemini?: string
+  groq?: string
+}
+
+export const settingsApi = {
+  getKeys: () => request<ProviderKeys>('/settings/keys'),
+  setKeys: (data: SetKeysPayload) =>
+    request<void>('/settings/keys', { method: 'POST', body: JSON.stringify(data) }),
+}
