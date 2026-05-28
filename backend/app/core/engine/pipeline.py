@@ -1,4 +1,5 @@
 import re
+import asyncio
 from collections import defaultdict, deque
 from typing import AsyncGenerator, List, Dict, Any, Optional, Set
 from app.core.engine.base import AgentConfig, ExecutionEvent
@@ -85,6 +86,7 @@ async def _run_bfs(
     final_output_box: list,                 # mutable box: [current_final_output]
     flow_input: str = "",                   # original top-level input for {{flow_input}}
     iteration: int = 1,                     # loop iteration number for {{iteration}}
+    human_input_queue: Optional[asyncio.Queue] = None,  # queue for humanInputNode
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Generic BFS traversal used by both the outer pipeline and the loop body.
@@ -254,6 +256,37 @@ async def _run_bfs(
             for exit_id in exit_starts:
                 queue.append((exit_id, loop_text, loop_text))
 
+        # ── Human input node ─────────────────────────────────────────────────
+        elif node_type == "humanInputNode":
+            prompt   = node["data"].get("prompt", "What is your input?")
+            label    = node["data"].get("label", "Human Input")
+
+            yield ExecutionEvent(
+                type="human_input_request",
+                agent_name=label,
+                content=prompt,
+            )
+
+            if human_input_queue is not None:
+                try:
+                    user_reply = await asyncio.wait_for(human_input_queue.get(), timeout=300)
+                except asyncio.TimeoutError:
+                    user_reply = "(timeout — no input received)"
+            else:
+                user_reply = current_text  # passthrough if no queue provided
+
+            yield ExecutionEvent(
+                type="human_input_received",
+                agent_name=label,
+                content=user_reply,
+            )
+
+            final_output_box[0] = user_reply
+
+            for (succ_id, _handle) in adj.get(node_id, []):
+                if allowed_ids is None or succ_id in allowed_ids:
+                    queue.append((succ_id, user_reply, current_text))
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -265,17 +298,19 @@ async def run_pipeline(
     agents_by_id: Dict[str, AgentConfig],
     initial_input: str,
     history: Optional[List[Dict]] = None,
+    human_input_queue: Optional[asyncio.Queue] = None,
 ) -> AsyncGenerator[ExecutionEvent, None]:
     """
     Pipeline topology with BFS traversal.
 
     Supported node types:
-      - agentNode     : run an LLM agent; pass output downstream
-      - conditionNode : evaluate text condition; route to "true" or "false" edge
-      - loopNode      : repeat body sub-graph up to N times (or until exit_condition)
+      - agentNode      : run an LLM agent; pass output downstream
+      - conditionNode  : evaluate text condition; route to "true" or "false" edge
+      - loopNode       : repeat body sub-graph up to N times (or until exit_condition)
+      - humanInputNode : pause flow and wait for user text via human_input_queue
     """
 
-    valid_types = {"agentNode", "conditionNode", "loopNode"}
+    valid_types = {"agentNode", "conditionNode", "loopNode", "humanInputNode"}
     node_map: Dict[str, Dict[str, Any]] = {
         n["id"]: n for n in nodes if n.get("type") in valid_types
     }
@@ -303,9 +338,12 @@ async def run_pipeline(
         )
         return
 
-    agent_count = sum(1 for n in node_map.values() if n.get("type") == "agentNode")
-    loop_count  = sum(1 for n in node_map.values() if n.get("type") == "loopNode")
-    extras = f", {loop_count} loop(s)" if loop_count else ""
+    agent_count  = sum(1 for n in node_map.values() if n.get("type") == "agentNode")
+    loop_count   = sum(1 for n in node_map.values() if n.get("type") == "loopNode")
+    human_count  = sum(1 for n in node_map.values() if n.get("type") == "humanInputNode")
+    extras = ""
+    if loop_count:  extras += f", {loop_count} loop(s)"
+    if human_count: extras += f", {human_count} human input(s)"
     yield ExecutionEvent(
         type="flow_start",
         content=f"Starting pipeline with {agent_count} agent(s){extras}",
@@ -326,6 +364,7 @@ async def run_pipeline(
         final_output_box=final_output_box,
         flow_input=initial_input,
         iteration=1,
+        human_input_queue=human_input_queue,
     ):
         yield event
 

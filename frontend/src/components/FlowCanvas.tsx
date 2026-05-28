@@ -17,12 +17,13 @@ import '@xyflow/react/dist/style.css'
 import AgentNode from './nodes/AgentNode'
 import ConditionNode from './nodes/ConditionNode'
 import LoopNode from './nodes/LoopNode'
+import HumanInputNode from './nodes/HumanInputNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
-import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw } from 'lucide-react'
+import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw, User } from 'lucide-react'
 import { toast } from 'sonner'
 import CanvasContext from '../contexts/CanvasContext'
 
-const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode }
+const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode, humanInputNode: HumanInputNode }
 
 const TOPOLOGY_OPTIONS = [
   { value: 'pipeline', label: 'Pipeline', icon: '→' },
@@ -342,6 +343,19 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
     setNodes((nds) => [...nds, newNode])
   }, [setNodes])
 
+  const handleAddHumanInputNode = useCallback(() => {
+    const center = rfInstanceRef.current
+      ? rfInstanceRef.current.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      : { x: 0, y: 0 }
+    const newNode: Node = {
+      id: `human-${++nodeCounter}-${Date.now()}`,
+      type: 'humanInputNode',
+      position: center,
+      data: { label: 'Human Input', prompt: 'Please provide your input:' },
+    }
+    setNodes((nds) => [...nds, newNode])
+  }, [setNodes])
+
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -411,6 +425,14 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
             >
               <RefreshCw className="h-3.5 w-3.5" />
               + Loop
+            </button>
+            <button
+              onClick={handleAddHumanInputNode}
+              title="Add a human-in-the-loop input node"
+              className="flex items-center gap-1.5 rounded-lg border border-rose-600/50 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors"
+            >
+              <User className="h-3.5 w-3.5" />
+              + Human
             </button>
           </div>
         )}

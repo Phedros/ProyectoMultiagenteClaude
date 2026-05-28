@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import {
   Play, Square, Trash2, ChevronDown, Brain, X, History,
-  Clock, CheckCircle, AlertCircle, Bug, StepForward,
+  Clock, CheckCircle, AlertCircle, Bug, StepForward, User, Send,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useExecutionStore, ExecutionEvent } from '../../store/executionStore'
@@ -24,7 +24,9 @@ const EVENT_BADGE_STYLES: Record<string, string> = {
   usage:           'bg-slate-600/30 text-slate-400',
   flow_end:        'bg-emerald-500/20 text-emerald-300',
   error:           'bg-red-500/20 text-red-300',
-  step_pause:      'bg-yellow-500/20 text-yellow-300',
+  step_pause:           'bg-yellow-500/20 text-yellow-300',
+  human_input_request:  'bg-rose-500/20 text-rose-300',
+  human_input_received: 'bg-rose-400/20 text-rose-200',
 }
 
 function EventBadge({ type }: { type: string }) {
@@ -336,9 +338,12 @@ export default function ExecutionPanel({ flowId }: Props) {
   const {
     events, isRunning, finalOutput,
     debugMode, isPaused, pausedAgentName,
+    humanInputPrompt,
     startExecution, stopExecution, continueStep,
-    setDebugMode, clearEvents,
+    submitHumanInput, setDebugMode, clearEvents,
   } = useExecutionStore()
+
+  const [humanInputText, setHumanInputText] = useState('')
 
   const [input, setInput] = useState('')
   const [memoryKey, setMemoryKey] = useState(0)
@@ -509,8 +514,47 @@ export default function ExecutionPanel({ flowId }: Props) {
         </div>
       )}
 
+      {/* ── Human input banner ─────────────────────────────────────────────── */}
+      {humanInputPrompt && (
+        <div className="border-b border-rose-500/30 bg-rose-500/10 px-3 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <User className="h-3.5 w-3.5 text-rose-400" />
+            <span className="text-xs font-semibold text-rose-300">Human Input Required</span>
+          </div>
+          <p className="text-xs text-slate-300 mb-2 leading-snug">{humanInputPrompt}</p>
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              className="flex-1 rounded-lg border border-rose-500/30 bg-[#141624] px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:border-rose-500 focus:outline-none"
+              placeholder="Type your response…"
+              value={humanInputText}
+              onChange={(e) => setHumanInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && humanInputText.trim()) {
+                  submitHumanInput(humanInputText)
+                  setHumanInputText('')
+                }
+              }}
+            />
+            <button
+              onClick={() => {
+                if (humanInputText.trim()) {
+                  submitHumanInput(humanInputText)
+                  setHumanInputText('')
+                }
+              }}
+              disabled={!humanInputText.trim()}
+              className="flex items-center gap-1 rounded-lg bg-rose-500/20 border border-rose-500/40 px-2.5 py-1.5 text-xs text-rose-200 hover:bg-rose-500/30 disabled:opacity-40 transition-colors"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Streaming output */}
-      {(isRunning && !isPaused && streamingOutput) && (
+      {(isRunning && !isPaused && !humanInputPrompt && streamingOutput) && (
         <div className="border-b border-[#2d3148] bg-[#0f1117] p-3">
           <div className="text-xs text-slate-500 mb-1 flex items-center gap-1.5">
             <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />

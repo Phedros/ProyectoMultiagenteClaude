@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -137,9 +138,15 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         ]
         agents_by_id = _build_agent_map(agent_ids, db)
 
+        # Queue for human-in-the-loop nodes (pipeline only)
+        human_input_queue: asyncio.Queue = asyncio.Queue()
+
         topology = flow.topology
         if topology == "pipeline":
-            runner = run_pipeline(flow.nodes, flow.edges, agents_by_id, input_text, history=history)
+            runner = run_pipeline(
+                flow.nodes, flow.edges, agents_by_id, input_text,
+                history=history, human_input_queue=human_input_queue,
+            )
         elif topology == "parallel":
             runner = run_parallel(flow.nodes, flow.edges, agents_by_id, input_text, history=history)
         elif topology == "hierarchical":
@@ -156,47 +163,77 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_cost_usd = 0.0
-        stopped = False
 
-        async for event in runner:
-            await websocket.send_text(json.dumps(event.to_dict()))
-            if event.type == "flow_end":
-                final_output = event.content
-            elif event.type == "error":
-                error_msg = event.content
-                status = "error"
-            elif event.type == "usage":
-                try:
-                    usage = json.loads(event.content)
-                    total_prompt_tokens     += usage.get("prompt_tokens", 0)
-                    total_completion_tokens += usage.get("completion_tokens", 0)
-                    total_cost_usd          += usage.get("estimated_cost_usd", 0.0)
-                except Exception:
-                    pass
+        # Asyncio primitives for debug mode and stop
+        stop_event    = asyncio.Event()
+        continue_event = asyncio.Event()
 
-            # Debug mode: pause after each agent completes
-            if debug_mode and event.type == "agent_end":
-                await websocket.send_text(json.dumps({
-                    "type": "step_pause",
-                    "agentId": event.agent_id,
-                    "agentName": event.agent_name,
-                    "content": event.content,
-                }))
-                # Wait for continue or stop from client
+        # Background task: read incoming WS messages and dispatch to queues/events
+        async def _ws_reader():
+            while True:
                 try:
-                    ctrl = await websocket.receive_text()
-                    ctrl_msg = json.loads(ctrl)
-                    if ctrl_msg.get("type") == "stop":
-                        stopped = True
-                        status = "stopped"
+                    raw = await websocket.receive_text()
+                    msg = json.loads(raw)
+                    msg_type = msg.get("type", "")
+                    if msg_type == "human_input":
+                        await human_input_queue.put(msg.get("content", ""))
+                    elif msg_type == "continue":
+                        continue_event.set()
+                    elif msg_type == "stop":
+                        stop_event.set()
+                        await human_input_queue.put("\x00STOP")  # unblock any waiting pipeline
                         break
-                    # Any other message (type="continue") resumes execution
                 except Exception:
-                    stopped = True
+                    stop_event.set()
+                    break
+
+        reader_task = asyncio.create_task(_ws_reader())
+
+        try:
+            async for event in runner:
+                if stop_event.is_set():
                     status = "stopped"
                     break
 
-        if stopped and not final_output:
+                await websocket.send_text(json.dumps(event.to_dict()))
+
+                if event.type == "flow_end":
+                    final_output = event.content
+                elif event.type == "error":
+                    error_msg = event.content
+                    status = "error"
+                elif event.type == "usage":
+                    try:
+                        usage = json.loads(event.content)
+                        total_prompt_tokens     += usage.get("prompt_tokens", 0)
+                        total_completion_tokens += usage.get("completion_tokens", 0)
+                        total_cost_usd          += usage.get("estimated_cost_usd", 0.0)
+                    except Exception:
+                        pass
+
+                # Debug mode: pause after each agent completes
+                if debug_mode and event.type == "agent_end":
+                    await websocket.send_text(json.dumps({
+                        "type": "step_pause",
+                        "agentId": event.agent_id,
+                        "agentName": event.agent_name,
+                        "content": event.content,
+                    }))
+                    # Wait for continue or stop
+                    continue_event.clear()
+                    while not continue_event.is_set() and not stop_event.is_set():
+                        await asyncio.sleep(0.1)
+                    if stop_event.is_set():
+                        status = "stopped"
+                        break
+        finally:
+            reader_task.cancel()
+            try:
+                await reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if status == "stopped" and not final_output:
             final_output = error_msg or "(stopped by user)"
 
         duration_ms = int((time.monotonic() - start_ms) * 1000)
