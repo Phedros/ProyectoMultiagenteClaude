@@ -18,12 +18,13 @@ import AgentNode from './nodes/AgentNode'
 import ConditionNode from './nodes/ConditionNode'
 import LoopNode from './nodes/LoopNode'
 import HumanInputNode from './nodes/HumanInputNode'
+import NoteNode from './nodes/NoteNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
-import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw, User } from 'lucide-react'
+import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload, RefreshCw, User, StickyNote } from 'lucide-react'
 import { toast } from 'sonner'
 import CanvasContext from '../contexts/CanvasContext'
 
-const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode, humanInputNode: HumanInputNode }
+const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode, loopNode: LoopNode, humanInputNode: HumanInputNode, noteNode: NoteNode }
 
 const TOPOLOGY_OPTIONS = [
   { value: 'pipeline', label: 'Pipeline', icon: '→' },
@@ -356,6 +357,19 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
     setNodes((nds) => [...nds, newNode])
   }, [setNodes])
 
+  const handleAddNoteNode = useCallback(() => {
+    const center = rfInstanceRef.current
+      ? rfInstanceRef.current.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      : { x: 0, y: 0 }
+    const newNode: Node = {
+      id: `note-${++nodeCounter}-${Date.now()}`,
+      type: 'noteNode',
+      position: { x: center.x + 20, y: center.y - 20 },
+      data: { text: '', colorIndex: 0, width: 220 },
+    }
+    setNodes((nds) => [...nds, newNode])
+  }, [setNodes])
+
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -436,6 +450,16 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
             </button>
           </div>
         )}
+
+        {/* Note button — available in all topologies */}
+        <button
+          onClick={handleAddNoteNode}
+          title="Add a sticky note"
+          className="flex items-center gap-1.5 rounded-lg border border-yellow-600/40 px-3 py-1.5 text-xs text-yellow-400/80 hover:bg-yellow-500/10 transition-colors"
+        >
+          <StickyNote className="h-3.5 w-3.5" />
+          + Note
+        </button>
 
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
