@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Text, Integer, Float, DateTime, ForeignKey, Index
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -17,6 +17,10 @@ class ExecutionRun(Base):
     error_message = Column(Text, nullable=True)
     duration_ms = Column(Integer, nullable=False, default=0)
     agent_count = Column(Integer, nullable=False, default=0)
+    # Token + cost tracking
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    estimated_cost_usd = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

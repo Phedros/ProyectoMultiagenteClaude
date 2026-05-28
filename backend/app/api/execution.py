@@ -58,6 +58,9 @@ def _save_run(
     agent_count: int,
     error_message: str | None,
     db: Session,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    estimated_cost_usd: float = 0.0,
 ) -> None:
     db.add(ExecutionRun(
         flow_id=flow.id,
@@ -69,6 +72,9 @@ def _save_run(
         error_message=error_message,
         duration_ms=duration_ms,
         agent_count=agent_count,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        estimated_cost_usd=estimated_cost_usd,
     ))
     db.commit()
 
@@ -119,6 +125,9 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
         final_output = ""
         error_msg = None
         status = "completed"
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost_usd = 0.0
 
         async for event in runner:
             await websocket.send_text(json.dumps(event.to_dict()))
@@ -127,6 +136,14 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
             elif event.type == "error":
                 error_msg = event.content
                 status = "error"
+            elif event.type == "usage":
+                try:
+                    usage = json.loads(event.content)
+                    total_prompt_tokens     += usage.get("prompt_tokens", 0)
+                    total_completion_tokens += usage.get("completion_tokens", 0)
+                    total_cost_usd          += usage.get("estimated_cost_usd", 0.0)
+                except Exception:
+                    pass
 
         duration_ms = int((time.monotonic() - start_ms) * 1000)
 
@@ -140,6 +157,9 @@ async def execute_flow(websocket: WebSocket, flow_id: str):
             agent_count=len(agent_ids),
             error_message=error_msg,
             db=db,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            estimated_cost_usd=round(total_cost_usd, 8),
         )
 
         # Persist exchange to conversation memory

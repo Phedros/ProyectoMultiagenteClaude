@@ -15,6 +15,7 @@ const EVENT_BADGE_STYLES: Record<string, string> = {
   tool_result:     'bg-teal-500/20 text-teal-300',
   agent_end:       'bg-purple-500/20 text-purple-300',
   condition_eval:  'bg-orange-500/20 text-orange-300',
+  usage:           'bg-slate-600/30 text-slate-400',
   flow_end:        'bg-emerald-500/20 text-emerald-300',
   error:           'bg-red-500/20 text-red-300',
 }
@@ -257,10 +258,22 @@ function RunsPanel({ flowId, runsKey }: { flowId: string; runsKey: number }) {
               <pre className="text-xs text-red-300 whitespace-pre-wrap bg-red-500/5 rounded p-2">{selected.error_message}</pre>
             </div>
           )}
-          <div className="flex gap-3 text-xs text-slate-500">
+          <div className="flex flex-wrap gap-3 text-xs text-slate-500">
             <span>⏱ {fmtDuration(selected.duration_ms)}</span>
             <span>🤖 {selected.agent_count} agent{selected.agent_count !== 1 ? 's' : ''}</span>
             <span>📐 {selected.topology}</span>
+            {(selected.prompt_tokens > 0 || selected.completion_tokens > 0) && (
+              <span title={`${selected.prompt_tokens} prompt + ${selected.completion_tokens} completion`}>
+                🔤 {(selected.prompt_tokens + selected.completion_tokens).toLocaleString()} tokens
+              </span>
+            )}
+            {selected.estimated_cost_usd > 0 && (
+              <span className="text-emerald-500">
+                💵 ${selected.estimated_cost_usd < 0.001
+                  ? selected.estimated_cost_usd.toExponential(2)
+                  : selected.estimated_cost_usd.toFixed(4)}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -286,6 +299,16 @@ function RunsPanel({ flowId, runsKey }: { flowId: string; runsKey: number }) {
               {fmtDate(run.created_at)}
               <span>·</span>
               {fmtDuration(run.duration_ms)}
+              {run.estimated_cost_usd > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="text-emerald-600">
+                    ${run.estimated_cost_usd < 0.001
+                      ? run.estimated_cost_usd.toExponential(1)
+                      : run.estimated_cost_usd.toFixed(4)}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button

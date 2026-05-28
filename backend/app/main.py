@@ -22,6 +22,15 @@ def _run_migrations() -> None:
                 conn.execute(text("ALTER TABLE agents ADD COLUMN tools TEXT DEFAULT '[]'"))
                 conn.commit()
 
+    if "execution_runs" in table_names:
+        existing_cols = {c["name"] for c in inspector.get_columns("execution_runs")}
+        with engine.connect() as conn:
+            if "prompt_tokens" not in existing_cols:
+                conn.execute(text("ALTER TABLE execution_runs ADD COLUMN prompt_tokens INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE execution_runs ADD COLUMN completion_tokens INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE execution_runs ADD COLUMN estimated_cost_usd REAL DEFAULT 0.0"))
+                conn.commit()
+
 
 _run_migrations()
 Base.metadata.create_all(bind=engine)

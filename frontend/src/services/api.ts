@@ -105,6 +105,9 @@ export interface ExecutionRun {
   error_message: string | null
   duration_ms: number
   agent_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  estimated_cost_usd: number
   created_at: string
 }
 

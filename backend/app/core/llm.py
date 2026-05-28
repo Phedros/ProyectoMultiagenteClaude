@@ -22,6 +22,34 @@ litellm.set_verbose = False
 import logging
 logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
+# ---------------------------------------------------------------------------
+# Pricing table (USD per 1M tokens)  prompt / completion
+# ---------------------------------------------------------------------------
+_PRICE: dict[str, tuple[float, float]] = {
+    "gpt-4o":                         (2.50,  10.00),
+    "gpt-4o-mini":                    (0.15,   0.60),
+    "gpt-4-turbo":                    (10.00, 30.00),
+    "gpt-3.5-turbo":                  (0.50,   1.50),
+    "claude-3-5-sonnet-20241022":     (3.00,  15.00),
+    "claude-3-5-haiku-20241022":      (0.80,   4.00),
+    "claude-3-opus-20240229":         (15.00, 75.00),
+    "claude-3-haiku-20240307":        (0.25,   1.25),
+    "gemini/gemini-2.0-flash":        (0.075,  0.30),
+    "gemini/gemini-1.5-pro":          (3.50,  10.50),
+    "gemini/gemini-1.5-flash":        (0.075,  0.30),
+    "groq/llama-3.1-70b-versatile":   (0.59,   0.79),
+    "groq/llama-3.1-8b-instant":      (0.05,   0.08),
+    "groq/mixtral-8x7b-32768":        (0.27,   0.27),
+    "groq/gemma2-9b-it":              (0.20,   0.20),
+    # Ollama / local — free
+}
+
+
+def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Return estimated cost in USD (0.0 for unknown/local models)."""
+    prices = _PRICE.get(model, (0.0, 0.0))
+    return round((prompt_tokens * prices[0] + completion_tokens * prices[1]) / 1_000_000, 8)
+
 
 async def run_agent_turn(
     system_prompt: str,
@@ -56,6 +84,10 @@ async def run_agent_turn(
 
     messages.append({"role": "user", "content": user_message})
 
+    # Accumulate usage across all iterations (including tool-call loops)
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+
     while True:
         kwargs: dict = {}
         if schemas:
@@ -67,6 +99,7 @@ async def run_agent_turn(
             temperature=temperature,
             messages=messages,
             stream=True,
+            stream_options={"include_usage": True},
             **kwargs,
         )
 
@@ -75,6 +108,11 @@ async def run_agent_turn(
         finish_reason: str | None = None
 
         async for chunk in stream:
+            # Collect usage from the last chunk (when stream_options supported)
+            if hasattr(chunk, "usage") and chunk.usage:
+                total_prompt_tokens    += getattr(chunk.usage, "prompt_tokens", 0) or 0
+                total_completion_tokens += getattr(chunk.usage, "completion_tokens", 0) or 0
+
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -152,6 +190,21 @@ async def run_agent_turn(
             continue
         else:
             break
+
+    # Emit a usage summary event so consumers can aggregate cost
+    estimated_cost = _estimate_cost(model, total_prompt_tokens, total_completion_tokens)
+    yield ExecutionEvent(
+        type="usage",
+        agent_id=agent_id,
+        agent_name=agent_name,
+        content=json.dumps({
+            "prompt_tokens":     total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens":      total_prompt_tokens + total_completion_tokens,
+            "estimated_cost_usd": estimated_cost,
+            "model": model,
+        }),
+    )
 
 
 async def call_agent_non_streaming(
