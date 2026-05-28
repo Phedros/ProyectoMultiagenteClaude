@@ -3,6 +3,7 @@ import { Handle, Position, NodeProps } from '@xyflow/react'
 import { Bot, Zap, Wrench } from 'lucide-react'
 import { useAgentStore } from '../../store/agentStore'
 import { useExecutionStore } from '../../store/executionStore'
+import { useCanvasContext } from '../../contexts/CanvasContext'
 
 // Short display names for known models
 const MODEL_LABELS: Record<string, string> = {
@@ -28,14 +29,19 @@ interface AgentNodeData {
   label: string
 }
 
-function AgentNode({ data, selected }: NodeProps) {
+function AgentNode({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as AgentNodeData
   const agents = useAgentStore((s) => s.agents)
   const activeAgentId = useExecutionStore((s) => s.activeAgentId)
+  const { topology, supervisorNodeId } = useCanvasContext()
 
   const agent = agents.find((a) => a.id === nodeData.agentId)
   const isActive = agent && activeAgentId === agent.id
   const toolCount = agent?.tools?.length ?? 0
+
+  const isHierarchical = topology === 'hierarchical'
+  const isSupervisor = isHierarchical && supervisorNodeId === id
+  const isWorker = isHierarchical && supervisorNodeId !== null && supervisorNodeId !== id
 
   return (
     <div
@@ -92,6 +98,17 @@ function AgentNode({ data, selected }: NodeProps) {
 
       {!agent && (
         <div className="mt-1 text-xs text-amber-400">Agent not found</div>
+      )}
+
+      {isSupervisor && (
+        <div className="mt-2 inline-flex items-center rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-300">
+          Supervisor
+        </div>
+      )}
+      {isWorker && (
+        <div className="mt-2 inline-flex items-center rounded-full bg-slate-600/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+          Worker
+        </div>
       )}
 
       <Handle

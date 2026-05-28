@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react'
 import {
   ReactFlow,
   Background,
@@ -18,6 +18,7 @@ import AgentNode from './nodes/AgentNode'
 import ConditionNode from './nodes/ConditionNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
 import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload } from 'lucide-react'
+import CanvasContext from '../contexts/CanvasContext'
 
 const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode }
 
@@ -106,6 +107,27 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
   nodesRef.current = nodes
   edgesRef.current = edges
   rfInstanceRef.current = rfInstance
+
+  // Compute which node is the supervisor (hierarchical only)
+  const supervisorNodeId = useMemo<string | null>(() => {
+    if (topology !== 'hierarchical') return null
+    const agentNodes = nodes.filter((n) => n.type === 'agentNode')
+    if (agentNodes.length === 0) return null
+    const agentIds = new Set(agentNodes.map((n) => n.id))
+    const inDeg: Record<string, number> = {}
+    const outDeg: Record<string, number> = {}
+    agentNodes.forEach((n) => { inDeg[n.id] = 0; outDeg[n.id] = 0 })
+    edges.forEach((e) => {
+      if (agentIds.has(e.source) && agentIds.has(e.target)) {
+        inDeg[e.target] = (inDeg[e.target] ?? 0) + 1
+        outDeg[e.source] = (outDeg[e.source] ?? 0) + 1
+      }
+    })
+    const roots = agentNodes.filter((n) => inDeg[n.id] === 0)
+    if (roots.length === 1) return roots[0].id
+    if (roots.length > 1) return roots.sort((a, b) => (outDeg[b.id] ?? 0) - (outDeg[a.id] ?? 0))[0].id
+    return agentNodes[0].id
+  }, [topology, nodes, edges])
 
   useEffect(() => {
     flowsApi.list().then(setSavedFlows).catch(console.error)
@@ -447,6 +469,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
       </div>
 
       {/* Canvas */}
+      <CanvasContext.Provider value={{ topology, supervisorNodeId }}>
       <div ref={containerRef} className="flex-1" onDragOver={onDragOver} onDrop={onDrop}>
         <ReactFlow
           nodes={nodes}
@@ -468,6 +491,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
           />
         </ReactFlow>
       </div>
+      </CanvasContext.Provider>
 
       {nodes.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
