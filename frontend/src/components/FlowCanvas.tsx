@@ -15,10 +15,11 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import AgentNode from './nodes/AgentNode'
+import ConditionNode from './nodes/ConditionNode'
 import { flowsApi, Flow, FlowNode, FlowEdge } from '../services/api'
 import { Save, FolderOpen, Plus, Trash2, GitBranch, Download, Upload } from 'lucide-react'
 
-const nodeTypes = { agentNode: AgentNode }
+const nodeTypes = { agentNode: AgentNode, conditionNode: ConditionNode }
 
 const TOPOLOGY_OPTIONS = [
   { value: 'pipeline', label: 'Pipeline', icon: '→' },
@@ -221,6 +222,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
         id: e.id,
         source: e.source,
         target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
       }))
 
       let saved: Flow
@@ -275,7 +277,7 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
         position: n.position,
         data: n.data,
       })),
-      edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? null })),
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -285,6 +287,19 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
     a.click()
     URL.revokeObjectURL(url)
   }, [flowName, topology, nodes, edges])
+
+  const handleAddConditionNode = useCallback(() => {
+    const center = rfInstanceRef.current
+      ? rfInstanceRef.current.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      : { x: 0, y: 0 }
+    const newNode: Node = {
+      id: `condition-${++nodeCounter}-${Date.now()}`,
+      type: 'conditionNode',
+      position: center,
+      data: { label: 'Condition', condition: '' },
+    }
+    setNodes((nds) => [...nds, newNode])
+  }, [setNodes])
 
   const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -337,6 +352,17 @@ export default function FlowCanvas({ onFlowSaved, activeFlowId }: Props) {
             </button>
           ))}
         </div>
+
+        {topology === 'pipeline' && (
+          <button
+            onClick={handleAddConditionNode}
+            title="Add a condition (if/else) node to the canvas"
+            className="flex items-center gap-1.5 rounded-lg border border-amber-600/50 px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            + Condition
+          </button>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">

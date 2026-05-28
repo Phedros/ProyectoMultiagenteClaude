@@ -8,14 +8,15 @@ interface Props {
 }
 
 const EVENT_BADGE_STYLES: Record<string, string> = {
-  flow_start:  'bg-blue-500/20 text-blue-300',
-  agent_start: 'bg-indigo-500/20 text-indigo-300',
-  token:       'bg-slate-500/10 text-slate-400',
-  tool_call:   'bg-amber-500/20 text-amber-300',
-  tool_result: 'bg-teal-500/20 text-teal-300',
-  agent_end:   'bg-purple-500/20 text-purple-300',
-  flow_end:    'bg-emerald-500/20 text-emerald-300',
-  error:       'bg-red-500/20 text-red-300',
+  flow_start:      'bg-blue-500/20 text-blue-300',
+  agent_start:     'bg-indigo-500/20 text-indigo-300',
+  token:           'bg-slate-500/10 text-slate-400',
+  tool_call:       'bg-amber-500/20 text-amber-300',
+  tool_result:     'bg-teal-500/20 text-teal-300',
+  agent_end:       'bg-purple-500/20 text-purple-300',
+  condition_eval:  'bg-orange-500/20 text-orange-300',
+  flow_end:        'bg-emerald-500/20 text-emerald-300',
+  error:           'bg-red-500/20 text-red-300',
 }
 
 function EventBadge({ type }: { type: string }) {
