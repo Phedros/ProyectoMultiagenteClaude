@@ -47,8 +47,29 @@ async def run_hierarchical(
         yield ExecutionEvent(type="error", content="Hierarchical topology requires at least 2 agent nodes")
         return
 
-    supervisor_node = agent_nodes[0]
-    worker_nodes = agent_nodes[1:]
+    # ── Determine supervisor via graph structure (in-degree = 0) ───────────
+    agent_ids_set = {n["id"] for n in agent_nodes}
+    in_deg: dict[str, int] = {nid: 0 for nid in agent_ids_set}
+    out_deg: dict[str, int] = {nid: 0 for nid in agent_ids_set}
+
+    for edge in edges:
+        src, tgt = edge.get("source", ""), edge.get("target", "")
+        if src in agent_ids_set and tgt in agent_ids_set:
+            in_deg[tgt] += 1
+            out_deg[src] += 1
+
+    roots = [n for n in agent_nodes if in_deg[n["id"]] == 0]
+
+    if len(roots) == 1:
+        supervisor_node = roots[0]
+    elif len(roots) > 1:
+        # Among multiple roots pick the one connected to the most workers
+        supervisor_node = max(roots, key=lambda n: out_deg[n["id"]])
+    else:
+        # All nodes have incoming edges (unusual) — fall back to list order
+        supervisor_node = agent_nodes[0]
+
+    worker_nodes = [n for n in agent_nodes if n["id"] != supervisor_node["id"]]
 
     supervisor_id = supervisor_node["data"].get("agentId")
     supervisor = agents_by_id.get(supervisor_id)
